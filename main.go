@@ -35,13 +35,14 @@ import (
 )
 
 type bot struct {
-	cfg    *config.Config
-	wa     *whatsmeow.Client
-	db     *store.Store
-	claude llm.Client
-	http   *llm.Tool  // I1: http_request, offered to everyone who can trigger the bot (I2)
-	mcp    []llm.Tool // I1: MCP tools, offered only to whitelisted requesters (I2)
-	chatMu sync.Map   // chat JID -> *sync.Mutex, one Claude call per chat at a time
+	cfg       *config.Config
+	wa        *whatsmeow.Client
+	db        *store.Store
+	claude    llm.Client
+	http      *llm.Tool  // I1: http_request, offered to everyone who can trigger the bot (I2)
+	httpOwner *llm.Tool  // I4: http_request with stored API keys, for whitelisted requesters
+	mcp       []llm.Tool // I1: MCP tools, offered only to whitelisted requesters (I2)
+	chatMu    sync.Map   // chat JID -> *sync.Mutex, one Claude call per chat at a time
 
 	curator   llm.Client             // H1: background knowledge passes, no web tools
 	curMu     sync.Mutex             // one curator pass at a time
@@ -114,9 +115,17 @@ func main() {
 		b.wlLID[l] = true
 	}
 	if cfg.APITools {
-		h := tools.HTTPTool(tools.NewHTTPClient())
+		hc := tools.NewHTTPClient()
+		h := tools.HTTPTool(hc, nil)
 		b.http, b.mcp = &h, mcpTools.Tools()
-		log.Printf("api tools: http_request for everyone, %d MCP tools for whitelisted requesters", len(b.mcp))
+		// I4: stored API keys, used by http_request for whitelisted requesters only.
+		keys, err := tools.LoadKeys(filepath.Join(cfg.DataDir, "api_keys.json"))
+		if err != nil {
+			log.Printf("api keys: %v", err)
+		}
+		hk := tools.HTTPTool(hc, keys)
+		b.httpOwner = &hk
+		log.Printf("api tools: http_request for everyone, stored keys for %d hosts and %d MCP tools for whitelisted requesters", len(keys), len(b.mcp))
 	}
 	{ // J5: resume the learned ratio for this model
 		key := "bytes_per_token:" + cfg.Model
@@ -478,7 +487,10 @@ func (b *bot) onMessage(e *events.Message) {
 		turn.Spoke[l.Handle] = true
 	}
 	toolset := append(turn.Tools(), turn.ScheduleTools()...)
-	if b.http != nil {
+	switch {
+	case line.Whitelisted && b.httpOwner != nil: // I4: stored keys are owner-only
+		toolset = append(toolset, *b.httpOwner)
+	case b.http != nil:
 		toolset = append(toolset, *b.http)
 	}
 	if line.Whitelisted { // I2: MCP tools are owner-only

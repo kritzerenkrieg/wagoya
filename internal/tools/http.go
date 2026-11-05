@@ -76,15 +76,21 @@ func NewHTTPClient() *http.Client {
 }
 
 // HTTPTool is the generic http_request tool (I1): call any public HTTP API.
-func HTTPTool(c *http.Client) llm.Tool {
+// keys are stored credentials (I4); pass them only for whitelisted requesters.
+func HTTPTool(c *http.Client, keys Keys) llm.Tool {
+	desc := "Make an HTTP request to a public API or URL and get the status, content type and body " +
+		"(first 20000 characters). Use it for REST/JSON APIs, including apps whose web pages need JavaScript: " +
+		"call their API instead (e.g. exchange a share link for a token, then read the data). " +
+		"Don't guess endpoints: first look for the app's API description, e.g. /api/v1/docs.json, /openapi.json, " +
+		"/swagger.json, /api/docs, or its documentation site, then follow it. " +
+		"Private and local network addresses are blocked."
+	if len(keys) > 0 {
+		desc += " Stored credentials are added automatically to https requests for: " + strings.Join(keys.Hosts(), ", ") +
+			". For these hosts send no auth header and never ask anyone for a token; if one still fails with 401/403, say the stored key was refused."
+	}
 	return llm.Tool{
-		Name: "http_request",
-		Description: "Make an HTTP request to a public API or URL and get the status, content type and body " +
-			"(first 20000 characters). Use it for REST/JSON APIs, including apps whose web pages need JavaScript: " +
-			"call their API instead (e.g. exchange a share link for a token, then read the data). " +
-			"Don't guess endpoints: first look for the app's API description, e.g. /api/v1/docs.json, /openapi.json, " +
-			"/swagger.json, /api/docs, or its documentation site, then follow it. " +
-			"Private and local network addresses are blocked.",
+		Name:        "http_request",
+		Description: desc,
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -109,12 +115,12 @@ func HTTPTool(c *http.Client) llm.Tool {
 			if err := json.Unmarshal(input, &in); err != nil {
 				return "invalid input: " + err.Error()
 			}
-			return doHTTP(ctx, c, in.Method, in.URL, in.Headers, in.Body, in.Find, in.Offset)
+			return keys.scrub(doHTTP(ctx, c, keys, in.Method, in.URL, in.Headers, in.Body, in.Find, in.Offset))
 		},
 	}
 }
 
-func doHTTP(ctx context.Context, c *http.Client, method, rawURL string, headers map[string]string, body, find string, offset int) string {
+func doHTTP(ctx context.Context, c *http.Client, keys Keys, method, rawURL string, headers map[string]string, body, find string, offset int) string {
 	if method == "" {
 		method = http.MethodGet
 	}
@@ -137,6 +143,25 @@ func doHTTP(ctx context.Context, c *http.Client, method, rawURL string, headers 
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
+	}
+	// I4: stored credentials for this host; dropped if a redirect leaves it.
+	if set := keys.apply(req); set != nil {
+		host, base := req.URL.Hostname(), c.CheckRedirect
+		cc := *c
+		cc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+			if base != nil {
+				if err := base(r, via); err != nil {
+					return err
+				}
+			}
+			if !strings.EqualFold(r.URL.Hostname(), host) || r.URL.Scheme != "https" {
+				for _, name := range set {
+					r.Header.Del(name)
+				}
+			}
+			return nil
+		}
+		c = &cc
 	}
 	res, err := c.Do(req)
 	if err != nil {

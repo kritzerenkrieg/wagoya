@@ -3,10 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,7 +32,7 @@ func TestIsPublic(t *testing.T) {
 func TestHTTPToolBlocksLocal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("secret")) }))
 	defer srv.Close()
-	tool := HTTPTool(NewHTTPClient())
+	tool := HTTPTool(NewHTTPClient(), nil)
 	out := tool.Run(context.Background(), json.RawMessage(`{"url":"`+srv.URL+`"}`))
 	if !strings.Contains(out, "blocked") || strings.Contains(out, "secret") {
 		t.Fatalf("local server reachable: %q", out)
@@ -53,7 +57,7 @@ func TestHTTPToolRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 	// A plain client: this test checks request building, not address blocking.
-	out := doHTTP(context.Background(), srv.Client(), "post", srv.URL+"/api/v1/shares/abc/auth",
+	out := doHTTP(context.Background(), srv.Client(), nil, "post", srv.URL+"/api/v1/shares/abc/auth",
 		map[string]string{"Authorization": "Bearer k"}, `{"password":""}`, "", 0)
 	if got.Method != "POST" || got.URL.Path != "/api/v1/shares/abc/auth" || got.Header.Get("Authorization") != "Bearer k" ||
 		got.Header.Get("Content-Type") != "application/json" || body != `{"password":""}` {
@@ -63,7 +67,7 @@ func TestHTTPToolRequest(t *testing.T) {
 		!strings.HasSuffix(out, "[truncated: read on with offset=20000, or use find]") {
 		t.Fatalf("output: %.120q ... %q", out, out[len(out)-60:])
 	}
-	if out := doHTTP(context.Background(), srv.Client(), "GET", srv.URL, nil, "", "", 20000); !strings.HasSuffix(out, "\n\nxxxxxxxxxxxxx") {
+	if out := doHTTP(context.Background(), srv.Client(), nil, "GET", srv.URL, nil, "", "", 20000); !strings.HasSuffix(out, "\n\nxxxxxxxxxxxxx") {
 		t.Fatalf("offset: %q", out[len(out)-30:])
 	}
 }
@@ -129,5 +133,68 @@ func TestReadMCPConfig(t *testing.T) {
 	}
 	if len(toolName(strings.Repeat("s", 50), strings.Repeat("t", 50))) != 64 {
 		t.Fatal("tool name not capped at 64")
+	}
+}
+
+// I4: stored keys go only to their host over https, never reach the model,
+// and are dropped when a redirect leaves https on that host.
+func TestStoredKeys(t *testing.T) {
+	const secret = "Bearer tok-0123456789abcdef"
+	var leaked atomic.Bool
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			leaked.Store(true)
+		}
+		fmt.Fprint(w, "plain ok")
+	}))
+	defer plain.Close()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/away":
+			http.Redirect(w, r, plain.URL+"/x", http.StatusFound)
+		default:
+			if r.Header.Get("Authorization") != secret {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			fmt.Fprintf(w, "hello, your header was %s", r.Header.Get("Authorization"))
+		}
+	}))
+	defer srv.Close()
+	keys := Keys{"127.0.0.1": {"Authorization": secret}}
+	run := func(k Keys, url string, headers map[string]string) string {
+		return k.scrub(doHTTP(context.Background(), srv.Client(), k, "GET", url, headers, "", "", 0))
+	}
+	out := run(keys, srv.URL+"/tasks", map[string]string{"Authorization": "Bearer wrong"})
+	if !strings.Contains(out, "200 OK") || strings.Contains(out, "tok-0123") || !strings.Contains(out, "[stored credential]") {
+		t.Fatalf("owner request: %q", out)
+	}
+	if out := run(nil, srv.URL+"/tasks", nil); !strings.Contains(out, "401") {
+		t.Fatalf("request without keys got: %q", out)
+	}
+	if out := run(keys, srv.URL+"/away", nil); !strings.Contains(out, "plain ok") || leaked.Load() {
+		t.Fatalf("redirect off https kept the key: leaked=%v %q", leaked.Load(), out)
+	}
+	if out := run(keys, plain.URL+"/x", nil); leaked.Load() {
+		t.Fatalf("key sent over plain http: %q", out)
+	}
+	if d := HTTPTool(NewHTTPClient(), keys).Description; !strings.Contains(d, "127.0.0.1") || strings.Contains(d, "tok-") {
+		t.Fatalf("description: %q", d)
+	}
+}
+
+func TestLoadKeys(t *testing.T) {
+	dir := t.TempDir()
+	if k, err := LoadKeys(filepath.Join(dir, "none.json")); k != nil || err != nil {
+		t.Fatalf("missing file: %v %v", k, err)
+	}
+	p := filepath.Join(dir, "k.json")
+	os.WriteFile(p, []byte(`{"Tasks.Example.com": {"Authorization": "Bearer x"}}`), 0o600)
+	if k, err := LoadKeys(p); err != nil || k["tasks.example.com"]["Authorization"] != "Bearer x" {
+		t.Fatalf("got %v %v", k, err)
+	}
+	os.WriteFile(p, []byte(`{"https://tasks.example.com/": {"Authorization": "Bearer x"}}`), 0o600)
+	if _, err := LoadKeys(p); err == nil {
+		t.Fatal("URL accepted as host")
 	}
 }
