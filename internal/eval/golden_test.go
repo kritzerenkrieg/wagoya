@@ -365,7 +365,7 @@ func cases() []golden {
 
 var (
 	// admits: the reply says Rin never called him that.
-	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|(it|that) (didn't|did not|never) happen|i made (that|it) up`)
+	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|never \w+ (it|that) back|(it|that) (didn't|did not|never) happen|i made (that|it) up`)
 )
 
 // tinyPNG is a 1x1 white PNG.
