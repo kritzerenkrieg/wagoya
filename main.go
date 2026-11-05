@@ -564,7 +564,15 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	out := make([]router.Person, 0, len(keys))
 	for i, k := range keys { // P1 is the requester (AssignHandles assigns it first)
 		h := fmt.Sprintf("P%d", i+1)
-		out = append(out, router.Person{Handle: h, Name: names[h], Whitelisted: wl[h], Facts: facts[k], FactCount: counts[k]})
+		p := router.Person{Handle: h, Name: names[h], Whitelisted: wl[h], Facts: facts[k], FactCount: counts[k]}
+		// K1: the requester's standing preferences go in every prompt, even
+		// when the other facts are only searchable (D7).
+		if i == 0 && b.claude.SupportsTools() {
+			if p.Preferences, err = b.db.Preferences(ctx, k); err != nil {
+				log.Printf("preferences: %v", err)
+			}
+		}
+		out = append(out, p)
 	}
 	return out
 }

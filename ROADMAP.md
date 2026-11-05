@@ -106,6 +106,14 @@ flowchart LR
 - [x] Hybrid fact search (J2 b+c). Done when: a name in a global query ranks that person's facts by the rest of the query, facts get embedding vectors in the background, search unions embedding and FTS hits ordered by tier, and the paraphrase set recalls at least 22/24 in the top 10.
 - [x] Learned token ratio and caps (J5 b+caps). Done when: the ratio updates from reported prompt tokens and survives restart, history lines and the request are capped, and trimming keeps the request and top 3 memories longest (router tests).
 
+## Phase K: Grounded replies
+
+**Goal:** Rin follows the standing preferences people set, and doesn't invent or defend claims about what was said.
+**Exit:** an owner's `Prefers:` fact shapes every reply without a search; told she said something she didn't, Rin checks the transcript and takes it back.
+
+- [x] Standing preferences in every prompt (K1). Done when: the requester's valid owner-tier `Prefers:`/`Rule:` facts (max 5) render under them in `<people>` in tool mode, and the golden case follows one (6/6 with it, 0/4 without).
+- [x] Grounding rule for claims about the past (K2). Done when: the system prompt has the rule, and the golden case "corrects a false claim" passes (measured 4-5/8 with the rule, 0/8 without).
+
 ## Cycle: feature and maintenance
 
 **Feature turn**
