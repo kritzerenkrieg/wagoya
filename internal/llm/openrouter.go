@@ -177,6 +177,7 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 		MaxTokens: 16000,
 		Reasoning: map[string]any{"effort": orEffort(c.effort), "exclude": true},
 	}
+	markupRetries := 0
 	for round := 0; ; round++ {
 		if len(tools) > 0 && round == maxToolRounds {
 			req.ToolChoice = "none" // last round: answer with what it has
@@ -197,6 +198,18 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 			if !strings.HasPrefix(tc.Function.Name, "openrouter:") {
 				calls = append(calls, tc)
 			}
+		}
+		if len(calls) == 0 && len(tools) > 0 && round < maxToolRounds && markupRetries < 2 && toolMarkup.MatchString(msg.Content) {
+			// The model wrote a tool call as text (DeepSeek's DSML), so it
+			// never ran. Send it back once or twice to use real tool calls,
+			// instead of returning a reply that claims it was done.
+			markupRetries++
+			log.Printf("openrouter: tool call written as text, retrying (%d)", markupRetries)
+			req.Messages = append(req.Messages,
+				orMessage{Role: "assistant", Content: strings.TrimSpace(toolMarkup.ReplaceAllString(msg.Content, ""))},
+				orMessage{Role: "user", Content: "[Your last message wrote a tool call as text, so it did not run and nothing was done. " +
+					"Make the call through the tool-calling interface now, or answer without it. Never say something was done unless a tool result says so.]"})
+			continue
 		}
 		if len(calls) == 0 || len(tools) == 0 || round == maxToolRounds {
 			if strings.TrimSpace(msg.Content) == "" && round > 0 {
@@ -221,6 +234,7 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 				}
 				result = t.Run(ctx, args)
 			}
+			log.Printf("tool %s -> %s", tc.Function.Name, firstLine(result, 80))
 			req.Messages = append(req.Messages, orMessage{Role: "tool", ToolCallID: tc.ID, Content: result})
 		}
 	}
@@ -265,6 +279,17 @@ func (c *orClient) post(ctx context.Context, body orRequest) (*orResponse, error
 	c.cost += out.Usage.Cost
 	c.costMu.Unlock()
 	return &out, nil
+}
+
+// firstLine is the start of s for logs.
+func firstLine(s string, n int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > n {
+		s = s[:n] + "…"
+	}
+	return s
 }
 
 // toolMarkup matches tool-call syntax some models (DeepSeek's "<｜DSML｜...")
