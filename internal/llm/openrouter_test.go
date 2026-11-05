@@ -133,3 +133,23 @@ func TestOpenRouterReportsPromptTokens(t *testing.T) {
 		t.Fatalf("got %d, %v", got, err)
 	}
 }
+
+// A tool call written as text (DSML) is sent back for a real tool call.
+func TestOpenRouterRetriesTextToolCall(t *testing.T) {
+	call := func(w http.ResponseWriter, _ map[string]any) {
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+			"finish_reason": "tool_calls", "message": map[string]any{"role": "assistant", "content": "",
+				"tool_calls": []any{map[string]any{"id": "c1", "type": "function",
+					"function": map[string]any{"name": "search_facts", "arguments": `{"query":"x"}`}}}}}}})
+	}
+	c, reqs := fakeOR(t, text("scheduled\n<｜DSML｜function_calls>\n<｜DSML｜invoke name=\"search_facts\">"), call, text("done for real"))
+	ran := 0
+	out, err := c.Reply(context.Background(), "sys", "remind me", nil, []Tool{FactSearchTool(func(context.Context, string, string, bool) string { ran++; return "ok" })})
+	if err != nil || out != "done for real" || ran != 1 {
+		t.Fatalf("out %q err %v ran %d", out, err, ran)
+	}
+	second, _ := json.Marshal((*reqs)[1]["messages"])
+	if !strings.Contains(string(second), "did not run") || strings.Contains(string(second), "DSML") {
+		t.Fatalf("retry request: %s", second)
+	}
+}
