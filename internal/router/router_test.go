@@ -256,3 +256,14 @@ func TestBuildPromptPreferences(t *testing.T) {
 		t.Fatal("system prompt misses the standing preferences rule")
 	}
 }
+
+// K4: current states render under the person, before preferences.
+func TestBuildPromptStates(t *testing.T) {
+	got := BuildPrompt(Prompt{People: []Person{
+		{Handle: "P1", Name: "John", FactCount: 3, States: []string{"State: woke at 7:10 [unverified; state since Fri 06:39]"}, Preferences: []string{"Prefers: tea"}},
+	}, Text: "hi"})
+	want := "  current states (newest first; newer beats older and the summary):\n  - State: woke at 7:10 [unverified; state since Fri 06:39]\n  standing preferences"
+	if !strings.Contains(got, want) {
+		t.Fatalf("got:\n%s", got)
+	}
+}

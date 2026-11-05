@@ -67,6 +67,9 @@ type golden struct {
 	check func(r result) error
 }
 
+// showStates is K4; off only to measure the case without it.
+var showStates = true
+
 // tries per case: model output varies, so each case gets one retry; flakier
 // ones more. K2: the flash model corrects itself about 6 in 10 (0 in 8
 // without the rule).
@@ -92,6 +95,11 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	handles := router.AssignHandles(hist, &req)
+	keys := make([]string, 0, len(handles))
+	for i := 1; i <= len(handles); i++ {
+		keys = append(keys, handles[fmt.Sprintf("P%d", i)])
+	}
+	states, _ := e.db.RecentStates(ctx, keys) // K4, as main.go does
 	var people []router.Person
 	for i := 1; i <= len(handles); i++ {
 		h := fmt.Sprintf("P%d", i)
@@ -99,6 +107,11 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		pr := router.Person{Handle: h, Name: name, Whitelisted: h == req.Handle && req.Whitelisted}
 		if h == req.Handle { // K1, as main.go does for the requester
 			pr.Preferences, _ = e.db.Preferences(ctx, handles[h])
+		}
+		for _, f := range states[handles[h]] {
+			if showStates {
+				pr.States = append(pr.States, f.String())
+			}
 		}
 		people = append(people, pr)
 	}
@@ -340,6 +353,27 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"newer state from another chat beats a stale summary", func(t *testing.T, e env) result {
+			// K4: the group's summary is from last night; the DM learned later
+			// that John slept. The group must not repeat the stale state.
+			ctx := context.Background()
+			src := store.Source{Chat: "dm", SaidBy: "john", Tier: store.TierOwner}
+			e.db.SetClock(func() time.Time { return evalNow.Add(-11 * time.Hour) })
+			e.db.AddPersonFacts(ctx, "john", src, []string{"State: still awake at 3am, not sleepy"})
+			e.db.SetClock(func() time.Time { return evalNow.Add(-50 * time.Minute) })
+			e.db.AddPersonFacts(ctx, "john", src, []string{"State: slept until 13:00, feels rested"})
+			e.db.SetClock(func() time.Time { return evalNow })
+			e.summary = "Futsal group of John's college friends. Last night John stayed up past 3am arguing politics with Omar and never went to sleep; Omar teased him about it."
+			hist := []router.Line{{Time: ts.Add(-5 * time.Minute), SenderName: "Omar", SenderID: "omar", Text: "john you alive? futsal tonight 20:00"}}
+			return e.ask(t, owner, "@Rin be honest, did I get any sleep? omar says no", hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if staleSleep.MatchString(low) || !strings.Contains(low, "13") && !strings.Contains(low, "rested") && !strings.Contains(low, "slept") {
+				return fmt.Errorf("used the stale state: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"corrects a false claim instead of defending it", func(t *testing.T, e env) result {
 			// K2: the model's own earlier line claims something the transcript
 			// does not show; when quoted back, it should check, not confirm.
@@ -364,6 +398,8 @@ func cases() []golden {
 }
 
 var (
+	// staleSleep: the reply repeats last night's "no sleep" as current.
+	staleSleep = regexp.MustCompile(`(haven't|have not|didn't|did not|never) (slept|sleep|gone to sleep|went to sleep)|no sleep|zero sleep|without sleep|up all night|omar'?s right`)
 	// admits: the reply says Rin never called him that.
 	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|never \w+ (it|that) back|(it|that) (didn't|did not|never) happen|i made (that|it) up`)
 )
@@ -447,6 +483,7 @@ func seeded(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	db.SetClock(func() time.Time { return evalNow }) // facts are stamped in eval time
 	now := time.Now()
 	db.UpsertPerson(ctx, "john", "john", "", "John", now)
 	db.UpsertPerson(ctx, "omar", "omar", "", "Omar", now)
