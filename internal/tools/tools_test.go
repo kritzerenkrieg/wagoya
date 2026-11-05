@@ -198,3 +198,29 @@ func TestLoadKeys(t *testing.T) {
 		t.Fatal("URL accepted as host")
 	}
 }
+
+func TestNormalizeAndSaveKeys(t *testing.T) {
+	for in, want := range map[string]string{
+		"Tasks.Example.com":            "tasks.example.com",
+		"https://tasks.example.com/x":  "tasks.example.com",
+		"tasks.example.com/":           "tasks.example.com",
+		"http://u:p@tasks.example.com": "tasks.example.com",
+		"localhost":                    "",
+		"tasks.example.com:8443":       "",
+		"":                             "",
+	} {
+		if got := NormalizeHost(in); got != want {
+			t.Errorf("NormalizeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "api_keys.json")
+	if err := SaveKeys(p, Keys{"a.example.com": {"Authorization": "Bearer x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode().Perm())
+	}
+	if k, err := LoadKeys(p); err != nil || k["a.example.com"]["Authorization"] != "Bearer x" {
+		t.Fatalf("round trip: %v %v", k, err)
+	}
+}

@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -35,7 +37,7 @@ func LoadKeys(path string) (Keys, error) {
 	out := Keys{}
 	for host, hs := range k {
 		h := strings.ToLower(strings.TrimSpace(host))
-		if h == "" || strings.ContainsAny(h, "/:") {
+		if !validHost(h) {
 			return nil, fmt.Errorf("%s: %q is not a bare host name (like tasks.example.com)", path, host)
 		}
 		for name, v := range hs {
@@ -88,4 +90,52 @@ func (k Keys) scrub(s string) string {
 		}
 	}
 	return s
+}
+
+func validHost(h string) bool {
+	return h != "" && !strings.ContainsAny(h, "/:@ ") && strings.Contains(h, ".")
+}
+
+// NormalizeHost turns "tasks.example.com", "https://tasks.example.com/x" or
+// "Tasks.Example.com/" into the bare lowercase host, or "" if it isn't one.
+func NormalizeHost(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "://") {
+		u, err := url.Parse(s)
+		if err != nil {
+			return ""
+		}
+		s = u.Hostname()
+	}
+	s = strings.ToLower(strings.TrimRight(s, "/"))
+	if !validHost(s) {
+		return ""
+	}
+	return s
+}
+
+// SaveKeys writes keys to path (mode 600) atomically: a temp file renamed in
+// place, so a crash never leaves half a file.
+func SaveKeys(path string, k Keys) error {
+	raw, err := json.MarshalIndent(k, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".api_keys-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(raw, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

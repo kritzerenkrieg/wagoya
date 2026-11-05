@@ -114,6 +114,13 @@ flowchart LR
 - [x] Standing preferences in every prompt (K1). Done when: the requester's valid owner-tier `Prefers:`/`Rule:` facts (max 5) render under them in `<people>` in tool mode, and the golden case follows one (6/6 with it, 0/4 without).
 - [x] Grounding rule for claims about the past (K2). Done when: the system prompt has the rule, and the golden case "corrects a false claim" passes (measured 4-5/8 with the rule, 0/8 without).
 
+## Phase L: Owner commands
+
+**Goal:** owners can manage the bot from WhatsApp without SSH or the model in the loop.
+**Exit:** an owner's `/key` makes `http_request` use the key at once, and `/reset` gives a chat a fresh start, with neither message stored.
+
+- [ ] Owner commands `/key` and `/reset` (L1, L2). Done when: unit tests cover parsing, key save/list/remove without echoing the secret, and reset keeping facts and memories; then, live, `/key` in a DM lets Rin read the owner's task board and `/reset` empties the chat context.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

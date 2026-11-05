@@ -20,6 +20,12 @@ A phase starts only when its rows are Decided.
 | D | Phase D: Persona and people |
 | E | Phase E: Web access |
 | F | Phase F: Reply context |
+| G | Phase G: OpenRouter provider |
+| H | Phase H: Self-updating knowledge |
+| I | Phase I: API and MCP tools |
+| J | Phase J: Knowledge system v2 |
+| K | Phase K: Grounded replies |
+| L | Phase L: Owner commands |
 
 | Code | Topic | Status | Decision / Question |
 |---|---|---|---|
@@ -89,3 +95,5 @@ A phase starts only when its rows are Decided.
 | K1 | Standing preferences in every prompt | Decided | Raised after the owner asked Rin to stop mentioning the time (2026-11-06 04:59) and she kept doing it. The rule was saved (owner fact + memory), but under D7 facts reach the prompt only when the model searches, and memories only when the request shares a word with them (a nickname alone pulls nothing). Option: always put the requester's owner-tier `Prefers:`/`Rule:` facts (a few lines) into `<people>`, an exception to D7's counts-only rule. |
 | K2 | Grounding rule for claims about the past | Decided | Rin invented "I called you <nickname>, you answered <nickname> back" (not in the transcript), then defended it when quoted back ("Yes. That's exactly what I said"). Replays (24 runs, 4 variants) did not reproduce that line but showed smaller invented past events (things Rin claimed she had done or said that night). Option: a system-prompt rule: claim what someone (including you) said earlier only if it is in the transcript, summary or a tool result; when told you said something you didn't, re-read the transcript instead of defending it. Built with the "find the line where it happened" wording: A/B on the golden case gave 0/8 without a rule, 2/8 with a plain re-read rule, 4-5/8 with this one. |
 | K3 | Stronger model for owner DMs | Decided | Rejected by the user (2026-11-06): keep one model. Context: the flash model (`deepseek-v4.1-flash`, effort medium) does well on the golden set but slips on long banter. Option: a second `MODEL` for whitelisted requesters' DMs (cost up; numbers to measure), or effort high everywhere (replays showed no clear gain on this case). |
+| L1 | `/key` command | Decided | Asked for by the user (2026-11-06), so a token can be given without SSH. An owner sends `/key <host or URL> <token>` (saved as `Authorization: Bearer <token>`), `/key <host> <Header-Name>: <value>`, `/key <host> remove`, or `/key` to list hosts, in a DM to the bot. The bot handles it before the model: the message is never stored, curated or sent to a provider; the key goes to `DATA_DIR/api_keys.json` (I4, written atomically, mode 600) and is used at once, without a restart. Replies never echo the secret and ask the owner to delete their message (the bot can't). In a group it is refused with a warning to revoke the token; from anyone but an owner it is ignored. |
+| L2 | `/reset` command | Decided | Asked for by the user (2026-11-06) to freshen a chat. An owner sends `/reset` (in a group, also as "@bot /reset"); the curator first reads any unread messages so no facts are lost, then the chat's transcript and rolling summary (J8) are deleted. Facts, memories and scheduled jobs stay. The command and its reply are not stored. From anyone but an owner it is ignored. |

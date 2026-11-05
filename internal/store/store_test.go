@@ -388,3 +388,45 @@ func TestJobsSurviveRestart(t *testing.T) {
 		t.Fatalf("after restart: %+v", due)
 	}
 }
+
+// L2: /reset drops the transcript and summary of one chat only; memories,
+// facts and jobs stay, and the curator only sees messages after the reset.
+func TestResetChat(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now()
+	for _, c := range []string{"a", "b"} {
+		s.AddMessage(ctx, c, router.Line{Time: now, SenderID: "john", SenderName: "John", Text: "hi " + c})
+		s.SetSummary(ctx, c, "summary "+c)
+	}
+	s.AddMemories(ctx, "a", []router.Memory{{Category: "note", Text: "keeps this"}})
+	s.AddPersonFacts(ctx, "john", Source{Chat: "a", Tier: TierSelf}, []string{"Likes: tea"})
+	s.TakeUnread(ctx, "a", 1)
+	n, err := s.ResetChat(ctx, "a")
+	if err != nil || n != 1 {
+		t.Fatalf("reset: %d %v", n, err)
+	}
+	if h, _ := s.History(ctx, "a"); len(h) != 0 {
+		t.Fatalf("history after reset: %v", h)
+	}
+	if sum, _ := s.Summary(ctx, "a"); sum != "" {
+		t.Fatalf("summary after reset: %q", sum)
+	}
+	if h, _ := s.History(ctx, "b"); len(h) != 1 {
+		t.Fatal("other chat touched")
+	}
+	if m, _ := s.SearchMemories(ctx, "a", "keeps", 5); len(m) != 1 {
+		t.Fatal("memory lost")
+	}
+	if c, _ := s.FactCounts(ctx, []string{"john"}); c["john"] != 1 {
+		t.Fatal("fact lost")
+	}
+	s.AddMessage(ctx, "a", router.Line{Time: now, SenderID: "john", SenderName: "John", Text: "fresh"})
+	if got, _ := s.TakeUnread(ctx, "a", 1); len(got) != 1 || got[0].Text != "fresh" {
+		t.Fatalf("curator after reset: %v", got)
+	}
+}
