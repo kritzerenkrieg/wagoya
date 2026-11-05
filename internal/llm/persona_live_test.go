@@ -22,7 +22,7 @@ func TestPersonaTagsLive(t *testing.T) {
 		t.Skip("no ANTHROPIC_API_KEY")
 	}
 	c := NewAPI(key, model, "low", false)
-	sys := router.SystemPrompt("Claude", "")
+	sys := router.SystemPrompt("Claude", "", false)
 	for _, wl := range []bool{true, false} {
 		req := router.Line{SenderName: "Kuri", SenderID: "lidA", Whitelisted: wl}
 		hist := []router.Line{{Time: time.Now(), SenderName: "Kuri", SenderID: "lidA", Whitelisted: wl, Text: "I'm the treasurer of this group btw"}}

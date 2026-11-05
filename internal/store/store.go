@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode"
@@ -18,6 +19,7 @@ import (
 type Store struct {
 	db           *sql.DB
 	historyLimit int
+	now          func() time.Time // clock for fact validity; tests replace it
 }
 
 const schema = `
@@ -32,6 +34,17 @@ CREATE TABLE IF NOT EXISTS messages (
 	text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_chat ON messages(chat, id);
+-- Small runtime state, e.g. the learned bytes-per-token ratio (J5).
+CREATE TABLE IF NOT EXISTS settings (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+-- J8: the curator's rolling summary of each chat.
+CREATE TABLE IF NOT EXISTS chat_summary (
+	chat TEXT PRIMARY KEY,
+	text TEXT NOT NULL,
+	ts INTEGER NOT NULL
+);
 -- H1: how far the knowledge curator has read in each chat.
 CREATE TABLE IF NOT EXISTS curator_state (
 	chat TEXT PRIMARY KEY,
@@ -74,6 +87,13 @@ CREATE TABLE IF NOT EXISTS person_facts (
 	text TEXT NOT NULL,
 	chat TEXT NOT NULL,
 	ts INTEGER NOT NULL,
+	-- J1, J4: provenance and validity (migrateFacts adds these to old files).
+	said_by TEXT NOT NULL DEFAULT '',
+	tier TEXT NOT NULL DEFAULT 'legacy',
+	kind TEXT NOT NULL DEFAULT 'fact',
+	valid_from INTEGER NOT NULL DEFAULT 0,
+	invalid_at INTEGER,
+	invalid_reason TEXT NOT NULL DEFAULT '',
 	UNIQUE(person, text)
 );
 CREATE INDEX IF NOT EXISTS person_facts_person ON person_facts(person, id);
@@ -101,7 +121,7 @@ func Open(path string, historyLimit int) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + jobsSchema + vectorsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
@@ -110,7 +130,12 @@ func Open(path string, historyLimit int) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("rebuild fact index: %w", err)
 	}
-	return &Store{db: db, historyLimit: historyLimit}, nil
+	// After the rebuild: the migration's updates fire the index triggers.
+	if err := migrateFacts(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate facts: %w", err)
+	}
+	return &Store{db: db, historyLimit: historyLimit, now: time.Now}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -224,6 +249,40 @@ func ftsQuery(text string) string {
 	return strings.Join(terms, " OR ")
 }
 
+// Setting returns a stored setting, or "".
+func (s *Store) Setting(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetSetting stores a setting.
+func (s *Store) SetSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES (?,?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+// Summary returns the rolling summary of chat, or "" (J8).
+func (s *Store) Summary(ctx context.Context, chat string) (string, error) {
+	var text string
+	err := s.db.QueryRowContext(ctx, `SELECT text FROM chat_summary WHERE chat = ?`, chat).Scan(&text)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return text, err
+}
+
+// SetSummary replaces the rolling summary of chat (J8).
+func (s *Store) SetSummary(ctx context.Context, chat, text string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_summary(chat, text, ts) VALUES (?,?,?)
+		ON CONFLICT(chat) DO UPDATE SET text = excluded.text, ts = excluded.ts`, chat, text, s.now().Unix())
+	return err
+}
+
 // Persona returns the current persona, or "" if none was set (D1).
 func (s *Store) Persona(ctx context.Context) (string, error) {
 	var text string
@@ -269,117 +328,16 @@ func (s *Store) UpsertPerson(ctx context.Context, key, lid, pn, name string, see
 			name = CASE WHEN excluded.name != '' THEN excluded.name ELSE people.name END,
 			last_seen = MAX(people.last_seen, excluded.last_seen)`,
 		key, lid, pn, name, seen.Unix(), seen.Unix())
-	return err
-}
-
-// AddPersonFacts adds facts to a person's global profile, skipping exact
-// duplicates; chat records where each fact was learned (D3, D4).
-func (s *Store) AddPersonFacts(ctx context.Context, key, chat string, facts []string) error {
-	for _, f := range facts {
-		if _, err := s.db.ExecContext(ctx,
-			`INSERT OR IGNORE INTO person_facts(person, text, chat, ts) VALUES (?,?,?,?)`,
-			key, f, chat, time.Now().Unix()); err != nil {
-			return err
-		}
+	if err != nil || lid == "" || pn == "" || key != lid {
+		return err
+	}
+	// J12: a profile made when only their number was known is the same person.
+	if ok, err := s.MergePerson(ctx, "pn:"+pn, lid); err != nil {
+		return err
+	} else if ok {
+		log.Printf("merged pn:%s into %s (same number)", IDTag(pn), IDTag(lid))
 	}
 	return nil
-}
-
-// ForgetPersonFact deletes a fact from a person's profile, matching text
-// case-insensitively. It reports whether anything was deleted (D4).
-func (s *Store) ForgetPersonFact(ctx context.Context, key, text string) (bool, error) {
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM person_facts WHERE person = ? AND lower(trim(text)) = lower(trim(?))`, key, text)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	return n > 0, err
-}
-
-// PersonFacts returns every fact for each key, oldest first (D7).
-func (s *Store) PersonFacts(ctx context.Context, keys []string) (map[string][]string, error) {
-	out := map[string][]string{}
-	for _, k := range keys {
-		rows, err := s.db.QueryContext(ctx,
-			`SELECT text FROM person_facts WHERE person = ? ORDER BY id`, k)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var t string
-			if err := rows.Scan(&t); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			out[k] = append(out[k], t)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
-// FactCounts returns how many facts each key has (D7).
-func (s *Store) FactCounts(ctx context.Context, keys []string) (map[string]int, error) {
-	out := map[string]int{}
-	for _, k := range keys {
-		var n int
-		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM person_facts WHERE person = ?`, k).Scan(&n); err != nil {
-			return nil, err
-		}
-		out[k] = n
-	}
-	return out, nil
-}
-
-// Fact is one person fact with its owner's key.
-type Fact struct {
-	Person string
-	Text   string
-}
-
-// SearchPersonFacts finds facts of the given people that match any word in
-// query, best match first. An empty query lists their facts, newest first.
-// Only keys passed in are searched, so absent people stay private (D7).
-func (s *Store) SearchPersonFacts(ctx context.Context, keys []string, query string, limit int) ([]Fact, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	in := strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")
-	args := make([]any, 0, len(keys)+2)
-	var q string
-	if strings.TrimSpace(query) == "" {
-		q = `SELECT person, text FROM person_facts WHERE person IN (` + in + `) ORDER BY id DESC LIMIT ?`
-	} else {
-		fq := ftsQuery(query)
-		if fq == "" {
-			return nil, nil
-		}
-		q = `SELECT person, text FROM person_facts_fts WHERE person_facts_fts MATCH ? AND person IN (` + in + `)
-			ORDER BY bm25(person_facts_fts) LIMIT ?`
-		args = append(args, fq)
-	}
-	for _, k := range keys {
-		args = append(args, k)
-	}
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Fact
-	for rows.Next() {
-		var f Fact
-		if err := rows.Scan(&f.Person, &f.Text); err != nil {
-			return nil, err
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
 }
 
 // PersonName returns the last display name seen for a person, or "".
@@ -468,59 +426,6 @@ func (s *Store) PersonByName(ctx context.Context, name string, now time.Time) (P
 	return p, s.UpsertPerson(ctx, p.Key, "", "", p.Name, now)
 }
 
-// SearchAllFacts searches every known person's facts (D7): full-text matches
-// on fact text, plus the newest facts of people whose name matches a word of
-// the query. An empty query lists the newest facts overall.
-func (s *Store) SearchAllFacts(ctx context.Context, query string, limit int) ([]Fact, error) {
-	var out []Fact
-	seen := map[[2]string]bool{}
-	add := func(rows *sql.Rows, err error) error {
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() && len(out) < limit {
-			var f Fact
-			if err := rows.Scan(&f.Person, &f.Text); err != nil {
-				return err
-			}
-			if k := [2]string{f.Person, f.Text}; !seen[k] {
-				seen[k] = true
-				out = append(out, f)
-			}
-		}
-		return rows.Err()
-	}
-	if strings.TrimSpace(query) == "" {
-		err := add(s.db.QueryContext(ctx, `SELECT person, text FROM person_facts ORDER BY id DESC LIMIT ?`, limit))
-		return out, err
-	}
-	// People named in the query first: "Omar" or "what does Omar do".
-	for _, w := range strings.Fields(query) {
-		w = strings.ToLower(strings.Trim(w, `?!.,:;"'`))
-		if len([]rune(w)) < 3 || stopwords[w] {
-			continue
-		}
-		people, err := s.FindPeople(ctx, w, 3)
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range people {
-			if err := add(s.db.QueryContext(ctx,
-				`SELECT person, text FROM person_facts WHERE person = ? ORDER BY id DESC LIMIT ?`, p.Key, limit)); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if fq := ftsQuery(query); fq != "" {
-		if err := add(s.db.QueryContext(ctx, `SELECT person, text FROM person_facts_fts WHERE person_facts_fts MATCH ?
-			ORDER BY bm25(person_facts_fts) LIMIT ?`, fq, limit)); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
-}
-
 // IDTag is a short tag that tells apart people with the same name: the last
 // 4 digits of their LID or number, or "name" for a name-only profile.
 func IDTag(key string) string {
@@ -597,32 +502,4 @@ func (s *Store) UnreadCount(ctx context.Context, chat string) (int, error) {
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE chat = ?
 		AND id > coalesce((SELECT last_id FROM curator_state WHERE chat = ?), 0)`, chat, chat).Scan(&n)
 	return n, err
-}
-
-// MergePerson moves a name-only profile's facts onto another profile and
-// deletes it (H3). Only "name:" profiles can be merged away.
-func (s *Store) MergePerson(ctx context.Context, from, to string) (bool, error) {
-	if !strings.HasPrefix(from, "name:") || from == to || to == "" {
-		return false, nil
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `DELETE FROM people WHERE key = ?`, from)
-	if err != nil {
-		return false, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return false, nil
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO person_facts(person, text, chat, ts)
-		SELECT ?, text, chat, ts FROM person_facts WHERE person = ?`, to, from); err != nil {
-		return false, err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM person_facts WHERE person = ?`, from); err != nil {
-		return false, err
-	}
-	return true, tx.Commit()
 }

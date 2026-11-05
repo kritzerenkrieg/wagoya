@@ -113,10 +113,10 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 	}
 
 	s.UpsertPerson(ctx, "lidB", "lidB", "", "Ani", now)
-	s.AddPersonFacts(ctx, "lidA", "group1", []string{"Budi is the treasurer.", "Budi is the treasurer."})
-	s.AddPersonFacts(ctx, "lidA", "group2", []string{"Budi likes durian."}) // learned in another chat
+	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group1", Tier: TierSelf}, []string{"Budi is the treasurer.", "Budi is the treasurer."})
+	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group2", Tier: TierSelf}, []string{"Budi likes durian."}) // learned in another chat
 	for i := range 12 {
-		s.AddPersonFacts(ctx, "lidB", "dm", []string{fmt.Sprintf("fact %02d", i)})
+		s.AddPersonFacts(ctx, "lidB", Source{Chat: "dm", Tier: TierSelf}, []string{fmt.Sprintf("fact %02d", i)})
 	}
 
 	got, err := s.PersonFacts(ctx, []string{"lidA", "lidB", "nobody"})
@@ -133,10 +133,10 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 		t.Fatal("unknown person has facts")
 	}
 
-	if ok, _ := s.ForgetPersonFact(ctx, "lidA", "  budi likes DURIAN. "); !ok {
+	if ok, _ := s.InvalidateFact(ctx, "lidA", "  budi likes DURIAN. ", TierOwner, "test"); !ok {
 		t.Fatal("forget did not match")
 	}
-	if ok, _ := s.ForgetPersonFact(ctx, "lidB", "Budi is the treasurer."); ok {
+	if ok, _ := s.InvalidateFact(ctx, "lidB", "Budi is the treasurer.", TierOwner, "test"); ok {
 		t.Fatal("forget crossed people")
 	}
 	got, _ = s.PersonFacts(ctx, []string{"lidA"})
@@ -152,8 +152,8 @@ func TestSearchPersonFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.AddPersonFacts(ctx, "ken", "dm", []string{"Job: IoT Systems Engineer at Acme Corp.", "Origin: Lisbon, Portugal."})
-	s.AddPersonFacts(ctx, "budi", "g1", []string{"Job: treasurer of the group."})
+	s.AddPersonFacts(ctx, "ken", Source{Chat: "dm", Tier: TierSelf}, []string{"Job: IoT Systems Engineer at Acme Corp.", "Origin: Lisbon, Portugal."})
+	s.AddPersonFacts(ctx, "budi", Source{Chat: "g1", Tier: TierSelf}, []string{"Job: treasurer of the group."})
 	s.Close()
 
 	s, err = Open(path, 32) // restart: index rebuilt and still consistent
@@ -162,23 +162,23 @@ func TestSearchPersonFacts(t *testing.T) {
 	}
 	defer s.Close()
 
-	got, err := s.SearchPersonFacts(ctx, []string{"ken", "budi"}, "where is his job?", 30)
+	got, err := s.SearchPersonFacts(ctx, []string{"ken", "budi"}, "where is his job?", 30, false)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("job search: %+v %v", got, err)
 	}
-	if got, _ := s.SearchPersonFacts(ctx, []string{"budi"}, "lisbon", 30); len(got) != 0 {
+	if got, _ := s.SearchPersonFacts(ctx, []string{"budi"}, "lisbon", 30, false); len(got) != 0 {
 		t.Fatalf("searched a person not in scope: %+v", got)
 	}
-	if got, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "engineers", 30); len(got) != 1 || got[0].Person != "ken" {
+	if got, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "engineers", 30, false); len(got) != 1 || got[0].Person != "ken" {
 		t.Fatalf("stemmed search: %+v", got)
 	}
-	if got, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "", 30); len(got) != 2 || got[0].Text != "Origin: Lisbon, Portugal." {
+	if got, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "", 30, false); len(got) != 2 || got[0].Text != "Origin: Lisbon, Portugal." {
 		t.Fatalf("list all (newest first): %+v", got)
 	}
 
 	// Forget keeps the index in sync.
-	s.ForgetPersonFact(ctx, "ken", "Origin: Lisbon, Portugal.")
-	if got, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "lisbon", 30); len(got) != 0 {
+	s.InvalidateFact(ctx, "ken", "Origin: Lisbon, Portugal.", TierOwner, "test")
+	if got, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "lisbon", 30, false); len(got) != 0 {
 		t.Fatalf("forgotten fact still found: %+v", got)
 	}
 	if n, _ := s.FactCounts(ctx, []string{"ken", "budi", "x"}); n["ken"] != 1 || n["budi"] != 1 || n["x"] != 0 {
@@ -213,8 +213,8 @@ func TestGlobalPeopleSearch(t *testing.T) {
 	s.UpsertPerson(ctx, "ken", "ken", "", "Alex Rivera", now)
 	s.UpsertPerson(ctx, "omar", "omar", "", "Omar", now)
 	s.UpsertPerson(ctx, "kris", "kris", "", "Kris", now)
-	s.AddPersonFacts(ctx, "ken", "dm", []string{"Origin: Lisbon, Portugal."})
-	s.AddPersonFacts(ctx, "omar", "group", []string{"Relation: Ken's friend.", "Knows: humanitarian law."})
+	s.AddPersonFacts(ctx, "ken", Source{Chat: "dm", Tier: TierSelf}, []string{"Origin: Lisbon, Portugal."})
+	s.AddPersonFacts(ctx, "omar", Source{Chat: "group", Tier: TierSelf}, []string{"Relation: Ken's friend.", "Knows: humanitarian law."})
 
 	// By name, also from a longer display name; short words don't match.
 	if p, _ := s.FindPeople(ctx, "Bapak Omar", 5); len(p) != 1 || p[0].Key != "omar" {
@@ -228,14 +228,14 @@ func TestGlobalPeopleSearch(t *testing.T) {
 	}
 
 	// Global search: a name in the query pulls that person's facts, from any chat.
-	got, err := s.SearchAllFacts(ctx, "who is omar?", 30)
+	got, err := s.SearchAllFacts(ctx, "who is omar?", 30, false)
 	if err != nil || len(got) != 2 || got[0].Person != "omar" {
 		t.Fatalf("name search: %+v %v", got, err)
 	}
-	if got, _ := s.SearchAllFacts(ctx, "humanitarian", 30); len(got) != 1 || got[0].Person != "omar" {
+	if got, _ := s.SearchAllFacts(ctx, "humanitarian", 30, false); len(got) != 1 || got[0].Person != "omar" {
 		t.Fatalf("fact search: %+v", got)
 	}
-	if got, _ := s.SearchAllFacts(ctx, "", 30); len(got) != 3 {
+	if got, _ := s.SearchAllFacts(ctx, "", 30, false); len(got) != 3 {
 		t.Fatalf("list all: %+v", got)
 	}
 
@@ -260,13 +260,13 @@ func TestSameNameTags(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now()
-	s.UpsertPerson(ctx, "268727614469249", "268727614469249", "", "Omar", now)
+	s.UpsertPerson(ctx, "900000000009249", "900000000009249", "", "Omar", now)
 	s.UpsertPerson(ctx, "111111111111180", "111111111111180", "", "omar", now.Add(-time.Hour))
 	s.UpsertPerson(ctx, "222", "222", "", "Ani", now)
-	if IDTag("268727614469249") != "9249" || IDTag("name:dewi") != "name" || IDTag("pn:62812") != "2812" {
+	if IDTag("900000000009249") != "9249" || IDTag("name:dewi") != "name" || IDTag("pn:62812") != "2812" {
 		t.Fatal("IDTag")
 	}
-	if taken, _ := s.NameTaken(ctx, "Omar", "268727614469249"); !taken {
+	if taken, _ := s.NameTaken(ctx, "Omar", "900000000009249"); !taken {
 		t.Fatal("shared name not detected")
 	}
 	if taken, _ := s.NameTaken(ctx, "Ani", "222"); taken {
@@ -328,14 +328,14 @@ func TestAliasAndMerge(t *testing.T) {
 	defer s.Close()
 	now := time.Now()
 	s.UpsertPerson(ctx, "lidN", "lidN", "", "Yan", now)
-	s.AddPersonFacts(ctx, "lidN", "g", []string{"Alias: Wayan"})
+	s.AddPersonFacts(ctx, "lidN", Source{Chat: "g", Tier: TierSelf}, []string{"Alias: Wayan"})
 	if p, _ := s.FindPeople(ctx, "wayan", 5); len(p) != 1 || p[0].Key != "lidN" {
 		t.Fatalf("alias lookup: %+v", p)
 	}
 	// A name-only profile created earlier merges into the real one.
 	s.UpsertPerson(ctx, "lidD", "lidD", "", "dewi_real", now)
 	ghost, _ := s.PersonByName(ctx, "Dewi Lestari", now)
-	s.AddPersonFacts(ctx, ghost.Key, "g", []string{"Habit: posts war photos."})
+	s.AddPersonFacts(ctx, ghost.Key, Source{Chat: "g", Tier: TierSelf}, []string{"Habit: posts war photos."})
 	if ok, err := s.MergePerson(ctx, ghost.Key, "lidD"); !ok || err != nil {
 		t.Fatalf("merge: %v %v", ok, err)
 	}
@@ -344,5 +344,47 @@ func TestAliasAndMerge(t *testing.T) {
 	}
 	if ok, _ := s.MergePerson(ctx, "lidN", "lidD"); ok {
 		t.Fatal("merged away a real profile")
+	}
+}
+
+func TestSummary(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	if got, err := s.Summary(ctx, "g"); got != "" || err != nil {
+		t.Fatalf("empty: %q %v", got, err)
+	}
+	s.SetSummary(ctx, "g", "one")
+	s.SetSummary(ctx, "g", "two")
+	if got, _ := s.Summary(ctx, "g"); got != "two" {
+		t.Fatalf("got %q", got)
+	}
+	if got, _ := s.Summary(ctx, "other"); got != "" {
+		t.Fatal("summary leaked to another chat")
+	}
+}
+
+// J7: scheduled jobs survive a restart.
+func TestJobsSurviveRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "j.db")
+	s, err := Open(path, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(time.Minute).Truncate(time.Second)
+	id, err := s.AddJob(context.Background(), Job{Chat: "g", CreatedBy: "ken", CreatedName: "Ken", Text: "eat", NextAt: at, Repeat: "daily"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if s, err = Open(path, 16); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if due, _ := s.DueJobs(context.Background(), at.Add(-time.Second)); len(due) != 0 {
+		t.Fatal("not yet due")
+	}
+	due, _ := s.DueJobs(context.Background(), at)
+	if len(due) != 1 || due[0].ID != id || due[0].Text != "eat" || due[0].Repeat != "daily" || !due[0].NextAt.Equal(at) {
+		t.Fatalf("after restart: %+v", due)
 	}
 }

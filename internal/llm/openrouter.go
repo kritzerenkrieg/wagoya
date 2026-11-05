@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,16 @@ type orClient struct {
 	key, model, effort, url string
 	web                     bool
 	http                    *http.Client
+
+	costMu sync.Mutex
+	cost   float64 // USD reported by OpenRouter, summed over all requests (J6)
+}
+
+// Cost is the total USD OpenRouter reported for this client's requests.
+func (c *orClient) Cost() float64 {
+	c.costMu.Lock()
+	defer c.costMu.Unlock()
+	return c.cost
 }
 
 // NewOpenRouter returns a client for OpenRouter (G1). model is an OpenRouter
@@ -93,6 +104,10 @@ type orResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage struct {
+		Cost         float64 `json:"cost"`
+		PromptTokens int     `json:"prompt_tokens"`
+	} `json:"usage"`
 }
 
 // orHTTPError is a non-2xx answer from OpenRouter.
@@ -170,6 +185,9 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 		if err != nil {
 			return "", err
 		}
+		if round == 0 {
+			reportPromptTokens(ctx, resp.Usage.PromptTokens) // J5
+		}
 		if len(resp.Choices) == 0 {
 			return "", errors.New("openrouter: no choices in response")
 		}
@@ -243,6 +261,9 @@ func (c *orClient) post(ctx context.Context, body orRequest) (*orResponse, error
 	if out.Error != nil {
 		return nil, fmt.Errorf("openrouter: %s", out.Error.Message)
 	}
+	c.costMu.Lock()
+	c.cost += out.Usage.Cost
+	c.costMu.Unlock()
 	return &out, nil
 }
 

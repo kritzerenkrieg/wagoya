@@ -25,8 +25,9 @@ type Image struct {
 }
 
 // FactSearch looks up stored facts about people in the chat (D7). person is
-// a handle like "P1" or ""; query is words to look for or "" to list.
-type FactSearch func(ctx context.Context, person, query string) string
+// a handle like "P1" or ""; query is words to look for or "" to list;
+// history also returns facts that are no longer true (J1).
+type FactSearch func(ctx context.Context, person, query string, history bool) string
 
 // Tool is a client-side tool the model may call: search_facts, http_request
 // or an MCP server's tool (D7, I1). Run gets the model's JSON input and
@@ -48,6 +49,11 @@ type Client interface {
 
 const maxToolRounds = 8
 
+// CostReporter is implemented by clients that know what they spent (J6).
+type CostReporter interface {
+	Cost() float64 // USD
+}
+
 // FactSearchTool wraps a FactSearch as the search_facts tool (D7).
 func FactSearchTool(search FactSearch) Tool {
 	return Tool{
@@ -55,13 +61,14 @@ func FactSearchTool(search FactSearch) Tool {
 		Schema: map[string]any{"type": "object", "properties": searchFactsProps},
 		Run: func(ctx context.Context, input json.RawMessage) string {
 			var in struct {
-				Person string `json:"person"`
-				Query  string `json:"query"`
+				Person  string `json:"person"`
+				Query   string `json:"query"`
+				History bool   `json:"history"`
 			}
 			if json.Unmarshal(input, &in) != nil {
 				return "invalid input"
 			}
-			return search(ctx, in.Person, in.Query)
+			return search(ctx, in.Person, in.Query, in.History)
 		},
 	}
 }
@@ -108,12 +115,15 @@ const (
 	searchFactsDesc = "Search your stored facts about people: anyone you know, from any chat, not only this one. " +
 		"Use it before answering anything that depends on who someone is: their name, job, background, preferences, " +
 		"history, or what they asked you to remember. Facts are short and start with a label such as Name:, Origin:, Job:, Education:, Skills:, Likes: or Games:, so label words match well. Search with a few short keywords; with no match you get their newest facts instead. " +
-		"Results are labelled with the handle, or the name for people not in this chat; people who share a name get an ID tag like Omar #9249, which you can pass as person."
+		"Results are labelled with the handle, or the name for people not in this chat; people who share a name get an ID tag like Omar #9249, which you can pass as person. " +
+		"Notes in brackets tell you how sure a fact is: [unverified] means someone else said it or it was inferred, so don't state it as certain; " +
+		"[claim] and [joke] are talk, not facts; [state since ...] is short-lived. Higher-trust facts come first. Outdated facts are hidden unless you set history. Results look like \"fact 123 | P2: Job: nurse\"; the number is the id for invalidate_fact."
 )
 
 var searchFactsProps = map[string]any{
-	"person": map[string]any{"type": "string", "description": "Optional: a handle like P1, or a person's name (e.g. Omar) for someone from another chat. Empty searches everyone you know."},
-	"query":  map[string]any{"type": "string", "description": "Keywords to look for. Empty, with a person, lists all of that person's facts."},
+	"person":  map[string]any{"type": "string", "description": "Optional: a handle like P1, or a person's name (e.g. Omar) for someone from another chat. Empty searches everyone you know."},
+	"query":   map[string]any{"type": "string", "description": "Keywords to look for. Empty, with a person, lists all of that person's facts."},
+	"history": map[string]any{"type": "boolean", "description": "Optional: also show facts that are no longer true (old jobs, expired states), e.g. for \"what did he do before?\"."},
 }
 
 // ---- Messages API (ANTHROPIC_API_KEY) ----
@@ -174,6 +184,9 @@ func (a *apiClient) Reply(ctx context.Context, system, prompt string, img *Image
 				return "", fmt.Errorf("claude api %d: %w", apiErr.StatusCode, err)
 			}
 			return "", err
+		}
+		if round == 0 { // J5
+			reportPromptTokens(ctx, int(resp.Usage.InputTokens+resp.Usage.CacheCreationInputTokens+resp.Usage.CacheReadInputTokens))
 		}
 		// B13: a refusal is sent as is, so just collect whatever text came back.
 		for _, b := range resp.Content {

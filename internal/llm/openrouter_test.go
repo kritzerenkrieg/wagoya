@@ -51,7 +51,7 @@ func TestOpenRouterToolLoop(t *testing.T) {
 	}
 	c, reqs := fakeOR(t, call, text("You're an IoT engineer."))
 	var got []string
-	out, err := c.Reply(context.Background(), "sys", "what do i do?", nil, []Tool{FactSearchTool(func(_ context.Context, p, q string) string {
+	out, err := c.Reply(context.Background(), "sys", "what do i do?", nil, []Tool{FactSearchTool(func(_ context.Context, p, q string, _ bool) string {
 		got = append(got, p+"|"+q)
 		return "P1: Job: IoT engineer"
 	})})
@@ -119,5 +119,17 @@ func TestStripToolMarkup(t *testing.T) {
 	}
 	if got := stripToolMarkup("plain <b>text</b>"); got != "plain <b>text</b>" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestOpenRouterReportsPromptTokens(t *testing.T) {
+	c, _ := fakeOR(t, func(w http.ResponseWriter, _ map[string]any) {
+		json.NewEncoder(w).Encode(map[string]any{"usage": map[string]any{"prompt_tokens": 1234}, "choices": []any{map[string]any{
+			"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "ok"}}}})
+	})
+	got := 0
+	ctx := WithPromptTokens(context.Background(), func(n int) { got = n })
+	if _, err := c.Reply(ctx, "sys", "hi", nil, nil); err != nil || got != 1234 {
+		t.Fatalf("got %d, %v", got, err)
 	}
 }

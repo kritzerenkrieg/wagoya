@@ -25,7 +25,7 @@ func TestSearchFactsLive(t *testing.T) {
 	facts := []string{"Name: Alex Rivera, goes by Ken; Rin's owner.", "Origin: Lisbon, Portugal; lives in Porto.",
 		"Job: IoT Systems Engineer, Acme Corp (since Dec 2025)."}
 	var calls []string
-	search := func(_ context.Context, person, query string) string {
+	search := func(_ context.Context, person, query string, _ bool) string {
 		calls = append(calls, person+"|"+query)
 		var hits []string
 		for _, f := range facts {
@@ -52,7 +52,7 @@ func TestSearchFactsLive(t *testing.T) {
 		Requester: req, Text: "where am i from and what do i do for work?"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	out, err := NewAPI(key, model, "low", false).Reply(ctx, router.SystemPrompt("Rin", "You are Rin, terse kuudere assistant."), p, nil, []Tool{FactSearchTool(search)})
+	out, err := NewAPI(key, model, "low", false).Reply(ctx, router.SystemPrompt("Rin", "You are Rin, terse kuudere assistant.", false), p, nil, []Tool{FactSearchTool(search)})
 	if err != nil {
 		t.Fatal(err)
 	}
