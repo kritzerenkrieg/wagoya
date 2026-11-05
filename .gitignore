@@ -1,0 +1,10 @@
+# secrets and runtime data (C3)
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-*
+# build output
+/wagoya
+/dist/
