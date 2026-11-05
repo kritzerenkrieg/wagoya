@@ -662,3 +662,34 @@ func (s *Store) Preferences(ctx context.Context, key string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// SetClock replaces the clock used for fact validity (tests and the golden
+// set, which run at a fixed time).
+func (s *Store) SetClock(now func() time.Time) { s.now = now }
+
+// MaxStates caps the current states shown per person in every prompt (K4).
+const MaxStates = 3
+
+// RecentStates returns each person's newest valid state facts, newest first,
+// at most MaxStates each, for every prompt (K4).
+func (s *Store) RecentStates(ctx context.Context, keys []string) (map[string][]Fact, error) {
+	if err := s.expireStates(ctx); err != nil {
+		return nil, err
+	}
+	out := map[string][]Fact{}
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		fs, err := s.queryFacts(ctx, MaxStates, map[int64]bool{}, nil,
+			`SELECT `+factCols+` FROM person_facts f WHERE f.person = ? AND f.kind = 'state' AND f.invalid_at IS NULL
+			 ORDER BY f.valid_from DESC, f.id DESC`, k)
+		if err != nil {
+			return nil, err
+		}
+		if len(fs) > 0 {
+			out[k] = fs
+		}
+	}
+	return out, nil
+}

@@ -230,3 +230,29 @@ func TestPreferences(t *testing.T) {
 		t.Fatalf("got %d preferences, want cap %d", len(got), MaxPreferences)
 	}
 }
+
+// K4: newest valid states first, capped, expired ones gone.
+func TestRecentStates(t *testing.T) {
+	s, now := openTest(t)
+	ctx := context.Background()
+	src := Source{Chat: "dm", Tier: TierInferred}
+	s.AddPersonFacts(ctx, "ken", src, []string{"State: up past midnight refusing to sleep"})
+	*now = now.Add(25 * time.Hour) // the first one expires
+	s.AddPersonFacts(ctx, "ken", src, []string{"State: throat better after warm water", "Likes: tea"})
+	for i, st := range []string{"State: on the train to work", "State: woke at 4:58 and had breakfast", "State: deep in a code review"} {
+		*now = now.Add(time.Duration(i+1) * time.Minute)
+		s.AddPersonFacts(ctx, "ken", src, []string{st})
+	}
+	got, err := s.RecentStates(ctx, []string{"ken", "ana", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "State: deep in a code review|State: woke at 4:58 and had breakfast|State: on the train to work"
+	var texts []string
+	for _, f := range got["ken"] {
+		texts = append(texts, f.Text)
+	}
+	if strings.Join(texts, "|") != want || got["ana"] != nil {
+		t.Fatalf("got %q", texts)
+	}
+}

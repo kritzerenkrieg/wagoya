@@ -596,6 +596,14 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	if err != nil {
 		log.Printf("person facts: %v", err)
 	}
+	// K4: everyone's newest states go in every prompt, so a chat isn't stale
+	// about what another chat already knows (CLI mode has all facts inline).
+	var states map[string][]store.Fact
+	if b.claude.SupportsTools() {
+		if states, err = b.db.RecentStates(ctx, keys); err != nil {
+			log.Printf("states: %v", err)
+		}
+	}
 	out := make([]router.Person, 0, len(keys))
 	for i, k := range keys { // P1 is the requester (AssignHandles assigns it first)
 		h := fmt.Sprintf("P%d", i+1)
@@ -606,6 +614,9 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 			if p.Preferences, err = b.db.Preferences(ctx, k); err != nil {
 				log.Printf("preferences: %v", err)
 			}
+		}
+		for _, f := range states[k] { // K4
+			p.States = append(p.States, f.String())
 		}
 		out = append(out, p)
 	}
