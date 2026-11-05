@@ -1,0 +1,19 @@
+[Unit]
+Description=wagoya WhatsApp assistant (C1)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=kuritzukurisu
+WorkingDirectory=/home/kuritzukurisu/wagoya
+ExecStart=/home/kuritzukurisu/wagoya/wagoya
+Environment=PATH=/home/kuritzukurisu/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
