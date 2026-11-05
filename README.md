@@ -12,13 +12,19 @@ wagoya remembers people, not just conversations.
 
 - **Profiles keyed by WhatsApp identity.** Every person the bot hears gets a profile keyed by their LID (or phone number), never by display name, so nobody can impersonate someone by renaming themselves.
 - **Global across chats.** What it learns about someone in one group is available in every other chat and DM.
-- **The model writes its own memory.** The model saves facts through hidden tags in its reply, which the bot strips before sending: `<person id="P2">Job: nurse</person>` for someone in the chat, or `<person name="Omar">Likes: chess</person>` for anyone else, even people who are only talked about.
+- **The model writes its own memory, through checked tools.** `save_fact`, `invalidate_fact` and `save_memory` validate every call and return errors to the model instead of failing silently. The bot, not the model, decides who said a fact and how much to trust it. Facts can be about anyone in the chat, or anyone only talked about. (The Claude Code CLI mode, which has no custom tools, falls back to hidden tags.)
 - **Compressed facts.** Facts are short and labelled (`Origin: …`, `Job: …`, `Likes: …`), so profiles stay small and searchable.
 - **Unlimited, searched on demand.** There is no cap on facts. Instead of stuffing every profile into the prompt, the model gets a `search_facts` tool backed by SQLite FTS5. It can search by handle, by name, or by fact text across everyone it knows. When nothing matches a named person, it falls back to that person's newest facts.
 - **Name disambiguation.** People who share a name get an ID tag (`Omar #9249`, `Omar #1180`), which the model can use to read or write the right profile.
 - **Per-chat memories.** Separately, the model can tag important chat context (`plan`, `decision`, `preference`, …), which is retrieved by keyword when the recent window doesn't have it.
 - **Self-updating.** A background curator reads every chat the bot is in (not just messages addressed to it) every 16 messages or after 10 quiet minutes, and saves new facts and nicknames on its own. Nicknames link back to real profiles and merge stray name-only ones.
-- **Owner-only forgetting.** Anyone can cause facts to be saved, but only whitelisted owners can make it forget or correct them.
+- **Facts with provenance.** Every fact records who said it and how much that source is trusted: the owner, the person themselves, someone else in the chat, or the bot's own inference. Hearsay ranks lower and is shown as unverified, and a less trusted source can't overrule a more trusted one.
+- **Facts age instead of vanishing.** Forgetting or correcting marks a fact as no longer true and keeps it as history. Short-lived states ("on the way home") expire after a day. Owners can retire anyone's facts; people can retire their own.
+- **One profile per person.** A profile made from someone's number merges into their account once WhatsApp reveals their LID, and a profile made from a name ("Andi") merges into the real account ("Andi Pratama") when exactly one matching person is in the chat where it was learned.
+- **Search that understands paraphrase.** Fact search combines keywords with embeddings, so "what does he do for work" finds "Job: accountant". Embedding a fact costs a fraction of a millionth of a dollar.
+- **Long chats keep their shape.** Only the last 16 messages go to the model, so the curator also keeps a rolling summary of each chat (who is who, ongoing plans, running jokes), at most 300 words, shown before the transcript.
+- **Reminders and nags.** "Remind me to eat at 12" schedules a message; owners can make it repeat (hourly, daily, weekdays, weekly) or send it to another group they are in, and the bot may schedule a caring nag on its own, rarely. Jobs are stored, so they survive restarts. Ask "what reminders do you have?" to list or cancel them.
+- **No spam pile-ups.** A fact that nearly repeats one already stored overwrites it instead of adding another row, so someone spamming the same bait leaves one fact, not fifty.
 
 ### Persona system
 
@@ -92,6 +98,7 @@ All settings live in `.env`; see [`.env.example`](.env.example) for every key. T
 | `WEB_TOOLS` | `true` | Web search and link reading |
 | `API_TOOLS` | `true` | `http_request` (everyone) and MCP tools (owners) |
 | `MCP_CONFIG` | `data/mcp.json` | MCP servers file |
+| `EMBED_MODEL` | `openai/text-embedding-3-small` | Embedding model for hybrid fact search, via OpenRouter (needs `OPENROUTER_API_KEY`); `off` for keywords only |
 | `SEND_INTERVAL` | `3s` | Global gap between outgoing messages |
 | `DENY_COOLDOWN` | `1m` | Per-chat cooldown for the denial reply |
 
@@ -102,6 +109,7 @@ main.go             WhatsApp events, identity, triggers, group rules, wiring
 internal/router     trigger decisions, prompt building, hidden-tag parsing, token budget
 internal/store      SQLite: chat window, memories, persona history, people and facts (FTS5)
 internal/llm        model clients: Claude API, Claude CLI, OpenRouter; generic tool loop
+internal/memtools   memory tools: search_facts, save_fact, invalidate_fact, save_memory
 internal/tools      http_request (public-only) and the MCP client
 internal/ratelimit  global send pacer and per-chat cooldown
 internal/config     .env loading and validation

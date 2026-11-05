@@ -61,7 +61,7 @@ flowchart LR
 **Exit:** `!$ what's the latest Go release?` gets a sourced, current answer, and a shared link gets summarised.
 
 - [x] Server-side web tools in API mode, WebSearch/WebFetch in CLI mode, `pause_turn` handled (E1). Done when: `go test ./...` passes and the live web test passes.
-- [ ] Decide who may use the web (E2).
+- [x] Decide who may use the web (E2).
 - [ ] Live check in WhatsApp (E1). Done when: the Phase E exit check passes.
 
 ## Phase G: OpenRouter provider
@@ -88,6 +88,23 @@ flowchart LR
 
 - [x] Generic tool loop, `http_request` with public-only dialing, MCP client from `mcp.json` (I1-I3). Done when: `go test ./...` passes and the live Flow-link test lists the tasks.
 - [ ] Live check in WhatsApp (I1, I2). Done when: the Phase I exit check passes.
+
+## Phase J: Knowledge system v2
+
+**Goal:** facts age, can be contradicted and carry their source; memory writes are validated tools; long chats keep their shape; changes are checked against a golden set.
+**Exit:** an outdated fact is invalidated (not deleted) after a contradiction in chat; a hearsay claim ranks below the person's own statement and is shown as unverified; a reply never contains a memory tag; the golden set passes before deploy.
+
+- [x] Golden set and runner (J6). Done when: the cases in J6 run on a cheap model with a cost report, and `deploy.sh` stops on a failure.
+- [x] Fact schema v2 and migration (J1, J4). Done when: the 182 existing facts migrate with kind/tier, store tests cover invalidate, expiry of `state` facts and tier ranking, and search hides invalid facts.
+- [x] Repetitive facts overwrite (J11). Done when: near-duplicate facts replace each other in place, aliases and higher tiers are safe, and no pair of the cleaned live facts counts as a duplicate.
+- [x] Merge profiles of the same person (J12). Done when: a number-only profile merges when the LID appears, and name-only profiles merge only on a unique name match in a shared chat (store tests).
+- [x] Memory tools replace tags (J3). Done when: replies and the curator use `save_fact`/`invalidate_fact`/`save_memory`, bad input returns an error to the model, CLI mode keeps tags, and no tag text can reach the chat.
+- [x] Rolling chat summary (J8). Done when: the curator updates a capped per-chat summary and the prompt shows it.
+- [ ] Scheduler (J7, after J9). Done when: a scheduled message is sent at its time through the pacer and survives a restart.
+- [x] Research hybrid retrieval (J2). Done when: options are measured (size, RAM, latency, recall on the golden set) and presented.
+- [x] Research token accounting (J5). Done when: counting options are measured and per-section budgets proposed.
+- [x] Hybrid fact search (J2 b+c). Done when: a name in a global query ranks that person's facts by the rest of the query, facts get embedding vectors in the background, search unions embedding and FTS hits ordered by tier, and the paraphrase set recalls at least 22/24 in the top 10.
+- [x] Learned token ratio and caps (J5 b+caps). Done when: the ratio updates from reported prompt tokens and survives restart, history lines and the request are capped, and trimming keeps the request and top 3 memories longest (router tests).
 
 ## Cycle: feature and maintenance
 

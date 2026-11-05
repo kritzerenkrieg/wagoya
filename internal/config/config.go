@@ -32,6 +32,7 @@ type Config struct {
 	WebTools        bool
 	APITools        bool   // I1: http_request + MCP tools for whitelisted requesters
 	MCPConfig       string // I3: path to mcp.json
+	EmbedModel      string // J2 c: OpenRouter embedding model for hybrid search; "" means off
 	DenyCooldown    time.Duration
 	DataDir         string
 }
@@ -184,6 +185,14 @@ func Load() (*Config, error) {
 		}
 	default:
 		return nil, fmt.Errorf("PROVIDER must be anthropic or openrouter, got %q", c.Provider)
+	}
+	// J2 c: embeddings go through OpenRouter, so they need its key.
+	switch m := get("EMBED_MODEL", "openai/text-embedding-3-small"); strings.ToLower(m) {
+	case "off", "none", "false", "0":
+	default:
+		if c.OpenRouterKey != "" {
+			c.EmbedModel = m
+		}
 	}
 	return c, nil
 }

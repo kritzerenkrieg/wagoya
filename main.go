@@ -3,11 +3,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +27,7 @@ import (
 
 	"github.com/kritzerenkrieg/wagoya/internal/config"
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
+	"github.com/kritzerenkrieg/wagoya/internal/memtools"
 	"github.com/kritzerenkrieg/wagoya/internal/ratelimit"
 	"github.com/kritzerenkrieg/wagoya/internal/router"
 	"github.com/kritzerenkrieg/wagoya/internal/store"
@@ -46,6 +50,12 @@ type bot struct {
 
 	pacer    *ratelimit.Pacer    // global outgoing message pacing (B18)
 	denyCool *ratelimit.Cooldown // one denial per chat per DENY_COOLDOWN (B14)
+
+	schedOnce sync.Once // J7: one delivery loop
+
+	ratio     *router.Ratio     // J5: learned bytes per prompt token of the model
+	vectors   *memtools.Vectors // J2 c: hybrid search; nil means FTS only
+	embedKick chan struct{}     // wakes the background embedder after a save
 
 	wlMu  sync.RWMutex
 	wlLID map[string]bool // configured LIDs plus LIDs resolved from phone numbers
@@ -108,6 +118,24 @@ func main() {
 		b.http, b.mcp = &h, mcpTools.Tools()
 		log.Printf("api tools: http_request for everyone, %d MCP tools for whitelisted requesters", len(b.mcp))
 	}
+	{ // J5: resume the learned ratio for this model
+		key := "bytes_per_token:" + cfg.Model
+		v, _ := db.Setting(context.Background(), key)
+		stored, _ := strconv.ParseFloat(v, 64)
+		b.ratio = router.NewRatio(stored, func(r float64) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := db.SetSetting(ctx, key, strconv.FormatFloat(r, 'f', 3, 64)); err != nil {
+				log.Printf("save token ratio: %v", err)
+			}
+		})
+	}
+	if cfg.EmbedModel != "" {
+		b.vectors = &memtools.Vectors{E: llm.NewOpenRouterEmbedder(cfg.OpenRouterKey, cfg.EmbedModel)}
+		b.embedKick = make(chan struct{}, 1)
+		go b.runEmbedder()
+		log.Printf("hybrid search: embeddings with %s", cfg.EmbedModel)
+	}
 	b.wa = whatsmeow.NewClient(device, waLogger)
 	b.wa.AddEventHandler(b.onEvent)
 
@@ -165,6 +193,8 @@ func (b *bot) onEvent(evt any) {
 		go func() {
 			b.resolveWhitelist()
 			b.auditGroups()
+			b.guessMerges()
+			b.schedOnce.Do(func() { go b.runScheduler() })
 		}()
 	case *events.JoinedGroup:
 		go b.onJoined(e)
@@ -406,6 +436,10 @@ func (b *bot) onMessage(e *events.Message) {
 		log.Printf("store message: %v", err)
 	}
 	b.noteMessage(chatKey)
+	summary, err := b.db.Summary(ctx, chatKey) // J8
+	if err != nil {
+		log.Printf("summary: %v", err)
+	}
 	mems, err := b.db.SearchMemories(ctx, chatKey, prompt, b.cfg.MemoryResults)
 	if err != nil {
 		log.Printf("memories: %v", err)
@@ -431,22 +465,41 @@ func (b *bot) onMessage(e *events.Message) {
 	if err != nil {
 		log.Printf("persona: %v", err)
 	}
-	system := router.SystemPrompt(b.cfg.BotName, persona)
+	system := router.SystemPrompt(b.cfg.BotName, persona, b.claude.SupportsTools())
 	handles := router.AssignHandles(history, &line)
 	people := b.people(ctx, handles, history, line)
 
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
-	full := router.FitPrompt(system, router.Prompt{
-		Memories: mems, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(),
-	}, b.cfg.ContextTokens)
-	toolset := []llm.Tool{llm.FactSearchTool(b.factSearch(handles))}
+	// J3: memory is written with checked tools; tags only in CLI mode.
+	turn := &memtools.Turn{DB: b.db, Chat: chatKey, Handles: handles, Requester: line, Spoke: map[string]bool{line.Handle: true},
+		// J10: groups without an owner are left (E1), so every group has one.
+		ChatHasOwner: isGroup || wl, ResolveChat: b.chatResolver(lid, pn), Vectors: b.vectors, AfterSave: b.kickEmbedder}
+	for _, l := range history {
+		turn.Spoke[l.Handle] = true
+	}
+	toolset := append(turn.Tools(), turn.ScheduleTools()...)
 	if b.http != nil {
 		toolset = append(toolset, *b.http)
 	}
 	if line.Whitelisted { // I2: MCP tools are owner-only
 		toolset = append(toolset, b.mcp...)
 	}
-	reply, err := b.claude.Reply(ctx, system, full, image, toolset)
+	// J5: tool definitions count in the fixed part; the ratio is learned
+	// from what each text-only reply's first round really cost.
+	toolBytes := 0
+	for _, t := range toolset {
+		j, _ := json.Marshal(t.Schema)
+		toolBytes += len(t.Name) + len(t.Description) + len(j)
+	}
+	full := router.FitPromptWith(system, router.Prompt{
+		Memories: mems, Summary: summary, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(),
+	}, b.cfg.ContextTokens, b.ratio.BytesPerToken(), toolBytes)
+	rctx := ctx
+	if image == nil {
+		sent := len(system) + len(full) + toolBytes
+		rctx = llm.WithPromptTokens(ctx, func(n int) { b.ratio.Observe(sent, n) })
+	}
+	reply, err := b.claude.Reply(rctx, system, full, image, toolset)
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		log.Printf("claude: %v", err)
@@ -454,7 +507,7 @@ func (b *bot) onMessage(e *events.Message) {
 		return
 	}
 	parsed := router.ParseReply(reply)
-	b.applyTags(ctx, chatKey, line, handles, parsed)
+	b.applyTags(ctx, chatKey, line, handles, parsed, !b.claude.SupportsTools())
 	reply = parsed.Text
 	if reply == "" {
 		return
@@ -516,83 +569,19 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	return out
 }
 
-// factSearch gives Claude a search over the facts of people in this prompt
-// only; handles are mapped back to person keys (D4, D7).
-func (b *bot) factSearch(handles map[string]string) llm.FactSearch {
-	byKey := map[string]string{}
-	for h, k := range handles {
-		byKey[k] = h
-	}
-	// label names a fact's owner: their handle if they are in this prompt,
-	// else their name (D7: people from other chats are searchable too).
-	label := func(ctx context.Context, key string) string {
-		name, _ := b.db.PersonName(ctx, key)
-		if h, ok := byKey[key]; ok {
-			return h
-		}
-		if name == "" {
-			return "someone #" + store.IDTag(key)
-		}
-		if taken, _ := b.db.NameTaken(ctx, name, key); taken {
-			return name + " #" + store.IDTag(key) // two people share the name
-		}
-		return name
-	}
-	return func(ctx context.Context, person, query string) string {
-		person = strings.TrimSpace(person)
-		var (
-			found []store.Fact
-			keys  []string
-			err   error
-		)
-		switch {
-		case person == "":
-			found, err = b.db.SearchAllFacts(ctx, query, 30)
-		default:
-			if k, ok := handles[strings.ToUpper(person)]; ok {
-				keys = []string{k}
-			} else {
-				people, ferr := b.db.FindPeople(ctx, person, 5)
-				if ferr != nil {
-					err = ferr
-					break
-				}
-				for _, p := range people {
-					keys = append(keys, p.Key)
-				}
-				if len(keys) == 0 {
-					return "no one known as " + person
-				}
-			}
-			found, err = b.db.SearchPersonFacts(ctx, keys, query, 30)
-		}
-		if err != nil {
-			log.Printf("search facts: %v", err)
-			return "search failed"
-		}
-		log.Printf("search_facts person=%q query=%q -> %d", person, query, len(found))
-		var sb strings.Builder
-		if len(found) == 0 && len(keys) > 0 && strings.TrimSpace(query) != "" {
-			// Compressed facts are labelled ("Origin: ...") and may not share
-			// words with the query, so fall back to the newest facts (D7).
-			if found, err = b.db.SearchPersonFacts(ctx, keys, "", 30); err != nil || len(found) == 0 {
-				return "no stored facts about " + person
-			}
-			sb.WriteString("no exact match; newest facts instead:\n")
-		} else if len(found) == 0 {
-			return "no matching facts"
-		}
-		for _, f := range found {
-			fmt.Fprintf(&sb, "%s: %s\n", label(ctx, f.Person), f.Text)
-		}
-		return sb.String()
-	}
-}
-
 // applyTags saves what Claude asked to remember, enforcing who may change
 // what: memories and person facts from anyone's request (B12, D4), forgets
 // and persona changes only from whitelisted requesters (D2, D4).
-func (b *bot) applyTags(ctx context.Context, chatKey string, req router.Line, handles map[string]string, r router.ParsedReply) {
+//
+// With tools (J3) memory tags are not applied: memory goes through the
+// checked tools, and stray tags are only stripped from the text.
+func (b *bot) applyTags(ctx context.Context, chatKey string, req router.Line, handles map[string]string, r router.ParsedReply, tags bool) {
+	if !tags {
+		if n := len(r.Memories) + len(r.PersonFacts) + len(r.Forgets); n > 0 {
+			log.Printf("ignored %d memory tags in tool mode (J3)", n)
+		}
+		r.Memories, r.PersonFacts, r.Forgets = nil, nil, nil
+	}
 	if len(r.Memories) > 0 {
 		if err := b.db.AddMemories(ctx, chatKey, r.Memories); err != nil {
 			log.Printf("save memories: %v", err)
@@ -616,26 +605,32 @@ func (b *bot) applyTags(ctx context.Context, chatKey string, req router.Line, ha
 		}
 		return "", f.Name
 	}
+	reqKey := handles[req.Handle]
 	for _, f := range r.PersonFacts {
 		key, who := resolve(f, true)
 		if key == "" {
 			log.Printf("person fact for unknown %s ignored", who)
 			continue
 		}
-		if err := b.db.AddPersonFacts(ctx, key, chatKey, []string{f.Text}); err != nil {
+		src := store.Source{Chat: chatKey, SaidBy: reqKey, Tier: memtools.RequestTier(req, reqKey, key)}
+		if err := b.db.AddPersonFacts(ctx, key, src, []string{f.Text}); err != nil {
 			log.Printf("save person fact: %v", err)
 		} else {
-			log.Printf("saved fact for %s (%s)", who, key)
+			log.Printf("saved fact for %s (%s, %s)", who, key, src.Tier)
 		}
 	}
 	for _, f := range r.Forgets {
 		key, who := resolve(f, false)
-		if key == "" || !req.Whitelisted {
+		// D4: owners can retire anyone's facts; J4: people their own, up
+		// to their own tier.
+		tier := memtools.RequestTier(req, reqKey, key)
+		if key == "" || tier == store.TierParticipant {
 			log.Printf("forget for %s ignored (requester whitelisted=%v)", who, req.Whitelisted)
 			continue
 		}
-		if done, err := b.db.ForgetPersonFact(ctx, key, f.Text); err != nil {
-			log.Printf("forget person fact: %v", err)
+		// J1: forgetting invalidates; the fact stays as history.
+		if done, err := b.db.InvalidateFact(ctx, key, f.Text, tier, "retracted at "+req.SenderName+"'s request"); err != nil {
+			log.Printf("forget for %s: %v", who, err)
 		} else if !done {
 			log.Printf("forget for %s: no fact matched %q", who, f.Text)
 		}
@@ -756,6 +751,207 @@ func (b *bot) onGroupChange(e *events.GroupInfo) {
 	}
 }
 
+// chatResolver finds another chat an owner may schedule into (J10): "dm"
+// for their own private chat, or a group they are in, by name.
+func (b *bot) chatResolver(lid, pn string) func(ctx context.Context, name string) (string, string, error) {
+	me := func(u types.JID) bool { return u.User != "" && (u.User == lid || u.User == pn) }
+	return func(ctx context.Context, name string) (string, string, error) {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "dm", "me", "private", "my dm", "pm":
+			switch {
+			case pn != "":
+				return types.NewJID(pn, types.DefaultUserServer).String(), "your DM", nil
+			case lid != "":
+				return types.NewJID(lid, types.HiddenUserServer).String(), "your DM", nil
+			}
+			return "", "", errors.New("I don't know your number")
+		}
+		groups, err := b.wa.GetJoinedGroups(ctx)
+		if err != nil {
+			return "", "", errors.New("could not list groups")
+		}
+		var hits []*types.GroupInfo
+		for _, g := range groups {
+			in := false
+			for _, p := range g.Participants {
+				in = in || me(p.JID) || me(p.LID) || me(p.PhoneNumber)
+			}
+			if !in {
+				continue
+			}
+			switch n, q := strings.ToLower(g.Name), strings.ToLower(strings.TrimSpace(name)); {
+			case n == q:
+				return g.JID.String(), g.Name, nil
+			case strings.Contains(n, q):
+				hits = append(hits, g)
+			}
+		}
+		switch len(hits) {
+		case 1:
+			return hits[0].JID.String(), hits[0].Name, nil
+		case 0:
+			return "", "", fmt.Errorf("no group of yours is called %q", name)
+		}
+		var names []string
+		for _, g := range hits {
+			names = append(names, g.Name)
+		}
+		return "", "", fmt.Errorf("several groups match: %s", strings.Join(names, ", "))
+	}
+}
+
+// kickEmbedder wakes the background embedder (J2 c); it never blocks.
+func (b *bot) kickEmbedder() {
+	if b.embedKick == nil {
+		return
+	}
+	select {
+	case b.embedKick <- struct{}{}:
+	default:
+	}
+}
+
+// runEmbedder gives every fact an embedding vector (J2 c): at start, a few
+// seconds after saves, and every 10 minutes for anything missed.
+func (b *bot) runEmbedder() {
+	tick := time.NewTicker(10 * time.Minute)
+	defer tick.Stop()
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		total := 0
+		for {
+			n, err := memtools.Embed(ctx, b.db, b.vectors.E, 100)
+			if err != nil {
+				log.Printf("embedder: %v", err)
+				break
+			}
+			if total += n; n == 0 {
+				break
+			}
+		}
+		cancel()
+		if total > 0 {
+			log.Printf("embedder: embedded %d facts", total)
+		}
+		select {
+		case <-b.embedKick:
+			time.Sleep(5 * time.Second) // batch saves made in one reply
+		case <-tick.C:
+		}
+	}
+}
+
+// runScheduler sends scheduled messages when due (J7), through the pacer
+// (B18). Jobs live in SQLite, so they survive restarts (J10: a one-off sent
+// late if under 12 h late; a recurring one skips missed runs).
+func (b *bot) runScheduler() {
+	const (
+		tick        = 30 * time.Second
+		oneOffGrace = 12 * time.Hour
+		repeatGrace = 30 * time.Minute
+	)
+	for {
+		b.runDue(time.Now(), oneOffGrace, repeatGrace)
+		time.Sleep(tick)
+	}
+}
+
+func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	jobs, err := b.db.DueJobs(ctx, now)
+	if err != nil {
+		log.Printf("scheduler: %v", err)
+		return
+	}
+	for _, j := range jobs {
+		send, next := memtools.DueAction(j, now, oneOffGrace, repeatGrace)
+		late := now.Sub(j.NextAt)
+		if !next.IsZero() {
+			if err := b.db.RescheduleJob(ctx, j.ID, next); err != nil {
+				log.Printf("scheduler: job %d: %v", j.ID, err)
+				continue
+			}
+		} else if err := b.db.DeleteJob(ctx, j.ID); err != nil {
+			log.Printf("scheduler: job %d: %v", j.ID, err)
+			continue
+		}
+		if !send {
+			log.Printf("scheduler: job %d skipped, %s late", j.ID, late.Round(time.Minute))
+			continue
+		}
+		chat, err := types.ParseJID(j.Chat)
+		if err != nil {
+			log.Printf("scheduler: job %d: bad chat", j.ID)
+			continue
+		}
+		b.send(ctx, chat, j.Text, nil)
+		log.Printf("scheduler: sent job %d", j.ID)
+		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: j.Text}); err != nil {
+			log.Printf("scheduler: store: %v", err)
+		}
+	}
+}
+
+// guessMerges folds name-only profiles into the real account they belong
+// to (J12): a unique name or nickname match who is in a chat the facts came
+// from (a group member, or the other side of a DM).
+func (b *bot) guessMerges() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	profiles, err := b.db.NameProfiles(ctx)
+	if err != nil {
+		log.Printf("guess merges: %v", err)
+		return
+	}
+	groups := map[string]*types.GroupInfo{}
+	inChat := func(chat string, a store.Account) bool {
+		j, err := types.ParseJID(chat)
+		if err != nil {
+			return false
+		}
+		is := func(u types.JID) bool {
+			return u.User != "" && (u.User == a.LID || u.User == a.PN)
+		}
+		if j.Server != types.GroupServer {
+			return is(j) // a DM: the chat is the person
+		}
+		g, ok := groups[chat]
+		if !ok {
+			if g, err = b.wa.GetGroupInfo(ctx, j); err != nil {
+				g = nil // left the group: no evidence
+			}
+			groups[chat] = g
+		}
+		if g == nil {
+			return false
+		}
+		for _, p := range g.Participants {
+			if is(p.JID) || is(p.LID) || is(p.PhoneNumber) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range profiles {
+		cands, err := b.db.MergeCandidates(ctx, p.Name)
+		if err != nil || len(cands) == 0 {
+			continue
+		}
+		a, ok := store.PickMerge(p, cands, inChat)
+		if !ok {
+			continue
+		}
+		if done, err := b.db.MergePerson(ctx, p.Key, a.Key); err != nil || !done {
+			continue
+		}
+		if !strings.EqualFold(p.Name, a.Name) { // keep the name findable
+			b.db.AddPersonFacts(ctx, a.Key, store.Source{Tier: store.TierInferred}, []string{"Alias: " + p.Name})
+		}
+		log.Printf("merged %s into %s (#%s), guessed from name and chat", p.Key, a.Name, store.IDTag(a.Key))
+	}
+}
+
 // auditGroups leaves groups without a whitelisted member at startup.
 func (b *bot) auditGroups() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -866,13 +1062,45 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		}
 		people = append(people, router.Person{Handle: h, Name: name, Facts: f})
 	}
-	out, err := b.curator.Reply(ctx, router.CuratorSystem, router.CuratorPrompt(people, lines), nil, nil)
+	old, err := b.db.Summary(ctx, chat)
 	if err != nil {
-		log.Printf("curator: %v", err)
-		return
+		log.Printf("curator: summary: %v", err)
 	}
-	r := router.ParseCurator(out)
+	prompt := router.CuratorPrompt(people, lines, old)
+	var saved int
+	var out string
+	if b.curator.SupportsTools() { // J3: the curator saves with the same checked tool
+		turn := &memtools.Turn{DB: b.db, Chat: chat, Handles: handles, AfterSave: b.kickEmbedder}
+		if out, err = b.curator.Reply(ctx, router.CuratorSystemTools, prompt, nil, turn.CuratorTools()); err != nil {
+			log.Printf("curator: %v", err)
+			return
+		}
+		saved = turn.Saved()
+	} else {
+		if out, err = b.curator.Reply(ctx, router.CuratorSystem, prompt, nil, nil); err != nil {
+			log.Printf("curator: %v", err)
+			return
+		}
+		saved = b.curateTags(ctx, chat, handles, router.ParseCurator(out))
+	}
+	// J8: the same pass rewrites the chat's rolling summary.
+	summary := router.ParseSummary(out)
+	if summary != "" {
+		if err := b.db.SetSummary(ctx, chat, summary); err != nil {
+			log.Printf("curator: save summary: %v", err)
+		}
+	}
+	log.Printf("curator: %s read %d messages, saved %d facts/aliases, summary %d words", chat, len(lines), saved, len(strings.Fields(summary)))
+	if saved > 0 {
+		b.guessMerges() // new name-only profiles may belong to someone known
+	}
+}
+
+// curateTags applies a curator pass's tags (CLI mode, which has no custom
+// tools) and reports how many facts it saved.
+func (b *bot) curateTags(ctx context.Context, chat string, handles map[string]string, r router.CuratorResult) int {
 	saved := 0
+	inferred := store.Source{Chat: chat, Tier: store.TierInferred} // J4
 	for _, f := range r.Facts {
 		key := handles[f.Handle]
 		if f.Handle == "" {
@@ -885,7 +1113,7 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		if key == "" {
 			continue
 		}
-		if err := b.db.AddPersonFacts(ctx, key, chat, []string{f.Text}); err == nil {
+		if err := b.db.AddPersonFacts(ctx, key, inferred, []string{f.Text}); err == nil {
 			saved++
 		}
 	}
@@ -894,7 +1122,7 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		if key == "" {
 			continue
 		}
-		if err := b.db.AddPersonFacts(ctx, key, chat, []string{"Alias: " + a.Text}); err == nil {
+		if err := b.db.AddPersonFacts(ctx, key, inferred, []string{"Alias: " + a.Text}); err == nil {
 			saved++
 		}
 		// H3: a name-only profile under this nickname belongs to them.
@@ -905,5 +1133,5 @@ func (b *bot) curate(chat string, lines []router.Line) {
 			log.Printf("curator: merged %s into %s", from, key)
 		}
 	}
-	log.Printf("curator: %s read %d messages, saved %d facts/aliases", chat, len(lines), saved)
+	return saved
 }

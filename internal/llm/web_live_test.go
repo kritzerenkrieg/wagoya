@@ -22,7 +22,7 @@ func TestWebToolsLive(t *testing.T) {
 		t.Skip("no ANTHROPIC_API_KEY")
 	}
 	c := NewAPI(key, model, "low", true)
-	sys := router.SystemPrompt("Rin", "You are Rin, terse kuudere assistant.")
+	sys := router.SystemPrompt("Rin", "You are Rin, terse kuudere assistant.", false)
 	for _, q := range []string{
 		"read https://go.dev/doc/devel/release and tell me the newest Go version listed there",
 		"search the web: what is the current price of Claude Sonnet 5.5 per million input tokens?",

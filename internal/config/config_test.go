@@ -39,3 +39,21 @@ func TestProvider(t *testing.T) {
 		t.Fatal("unknown provider accepted")
 	}
 }
+
+func TestEmbedModel(t *testing.T) {
+	t.Setenv("PROVIDER", "anthropic")
+	t.Setenv("ANTHROPIC_API_KEY", "a")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("EMBED_MODEL", "")
+	if c, _ := Load(); c.EmbedModel != "" {
+		t.Fatalf("embeddings without an OpenRouter key: %q", c.EmbedModel)
+	}
+	t.Setenv("OPENROUTER_API_KEY", "k")
+	if c, _ := Load(); c.EmbedModel != "openai/text-embedding-3-small" {
+		t.Fatalf("default: %q", c.EmbedModel)
+	}
+	t.Setenv("EMBED_MODEL", "off")
+	if c, _ := Load(); c.EmbedModel != "" {
+		t.Fatalf("off: %q", c.EmbedModel)
+	}
+}
