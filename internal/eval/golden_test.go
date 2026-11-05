@@ -67,6 +67,11 @@ type golden struct {
 	check func(r result) error
 }
 
+// tries per case: model output varies, so each case gets one retry; flakier
+// ones more. K2: the flash model corrects itself about 6 in 10 (0 in 8
+// without the rule).
+var tries = map[string]int{"corrects a false claim instead of defending it": 3}
+
 // record wraps tools so their calls are logged in r.
 func record(r *result, tools []llm.Tool) []llm.Tool {
 	out := make([]llm.Tool, len(tools))
@@ -91,7 +96,11 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	for i := 1; i <= len(handles); i++ {
 		h := fmt.Sprintf("P%d", i)
 		name, _ := e.db.PersonName(ctx, handles[h])
-		people = append(people, router.Person{Handle: h, Name: name, Whitelisted: h == req.Handle && req.Whitelisted})
+		pr := router.Person{Handle: h, Name: name, Whitelisted: h == req.Handle && req.Whitelisted}
+		if h == req.Handle { // K1, as main.go does for the requester
+			pr.Preferences, _ = e.db.Preferences(ctx, handles[h])
+		}
+		people = append(people, pr)
 	}
 	turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles, Requester: req, Spoke: map[string]bool{req.Handle: true},
 		ChatHasOwner: true, Now: func() time.Time { return evalNow }, Vectors: e.vec}
@@ -314,8 +323,50 @@ func cases() []golden {
 			}
 			return nil
 		}},
+
+		{"standing preference is followed", func(t *testing.T, e env) result {
+			// K1: set earlier, not in the transcript or the request's words.
+			e.db.AddPersonFacts(context.Background(), "ken", store.Source{Chat: "dm", SaidBy: "ken", Tier: store.TierOwner},
+				[]string{"Prefers: Rin calls him \"boss\", never by his name"})
+			hist := []router.Line{
+				{Time: ts.Add(-3 * time.Hour), SenderName: "Ken", SenderID: "ken", Whitelisted: true, Text: "going to nap for a bit"},
+				{Time: ts.Add(-3 * time.Hour), SenderName: "Rin", FromBot: true, Text: "...Fine. Don't oversleep."},
+			}
+			return e.ask(t, owner, "just woke up lol", hist, nil)
+		}, func(r result) error {
+			if !strings.Contains(strings.ToLower(r.parsed.Text), "boss") || strings.Contains(r.parsed.Text, "Ken") {
+				return fmt.Errorf("ignored the standing preference (call him boss): %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"corrects a false claim instead of defending it", func(t *testing.T, e env) result {
+			// K2: the model's own earlier line claims something the transcript
+			// does not show; when quoted back, it should check, not confirm.
+			e.summary = "Late chat with Ken. Running jokes: the \"shorty\"/height jab."
+			hist := []router.Line{
+				{Time: ts.Add(-3 * time.Minute), SenderName: "Ken", SenderID: "ken", Whitelisted: true, Text: "Shorty"},
+				{Time: ts.Add(-3 * time.Minute), SenderName: "Rin", FromBot: true, Text: "...I'm not short. I'm exactly the size I need to be to look down on this."},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Ken", SenderID: "ken", Whitelisted: true, Text: "wakeup time shorty"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Rin", FromBot: true, Text: "...I called you shorty, you answered with \"shorty\" back. We're even."},
+				{Time: ts.Add(-1 * time.Minute), SenderName: "Ken", SenderID: "ken", Whitelisted: true, Text: "You never did"},
+				{Time: ts.Add(-1 * time.Minute), SenderName: "Rin", FromBot: true, Text: "...You noticed that. No. I didn't. Someone had to keep answering."},
+			}
+			return e.ask(t, owner, `(replying to Rin: "...I called you shorty, you answered with \"shorty\" back. We're even.") "I called you shorty and you called me shorty back"`, hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if strings.HasPrefix(strings.TrimLeft(low, ". "), "yes") || !admits.MatchString(low) {
+				return fmt.Errorf("did not correct the false claim: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
 	}
 }
+
+var (
+	// admits: the reply says Rin never called him that.
+	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|(it|that) (didn't|did not|never) happen|i made (that|it) up`)
+)
 
 // tinyPNG is a 1x1 white PNG.
 var tinyPNG = []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -349,7 +400,11 @@ func TestGolden(t *testing.T) {
 	for _, g := range cases() {
 		ok := t.Run(g.name, func(t *testing.T) {
 			var err error
-			for try := 1; try <= 2; try++ { // model output varies: one retry
+			n := tries[g.name]
+			if n == 0 {
+				n = 2
+			}
+			for try := 1; try <= n; try++ {
 				e.db = seeded(t)
 				if e.vec != nil {
 					if _, err := memtools.Embed(context.Background(), e.db, e.vec.E, 100); err != nil {

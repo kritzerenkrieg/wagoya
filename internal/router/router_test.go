@@ -241,3 +241,18 @@ func TestRatio(t *testing.T) {
 		t.Fatal("stored ratio not reused")
 	}
 }
+
+// K1: standing preferences render under the person, with or without facts.
+func TestBuildPromptPreferences(t *testing.T) {
+	got := BuildPrompt(Prompt{People: []Person{
+		{Handle: "P1", Name: "Ken", Whitelisted: true, FactCount: 3, Preferences: []string{"Prefers: no time mentions"}},
+		{Handle: "P2", Name: "Ana"},
+	}, Text: "hi"})
+	want := "P1 Ken (whitelisted=\"yes\"): 3 stored facts, use search_facts\n  standing preferences (they set these; follow them in every reply):\n  - Prefers: no time mentions\nP2 Ana (whitelisted=\"no\"): no known facts\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("got:\n%s", got)
+	}
+	if !strings.Contains(SystemPrompt("Rin", "", true), "Standing preferences") {
+		t.Fatal("system prompt misses the standing preferences rule")
+	}
+}

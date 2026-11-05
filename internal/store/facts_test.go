@@ -198,3 +198,35 @@ func TestNearDuplicatesOverwrite(t *testing.T) {
 		t.Fatalf("owner did not overwrite: %+v", got)
 	}
 }
+
+// K1: only valid owner-tier Prefers:/Rule: facts, newest first, capped.
+func TestPreferences(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	owner := Source{Chat: "dm", SaidBy: "ken", Tier: TierOwner}
+	s.AddPersonFacts(ctx, "ken", owner, []string{"Prefers: no time mentions unless decisive", "Likes: tea", "Rule: never call him bro"})
+	s.AddPersonFacts(ctx, "ken", Source{Chat: "dm", Tier: TierInferred}, []string{"Prefers: long replies at night"})
+	s.AddPersonFacts(ctx, "ana", owner, []string{"Prefers: English replies"})
+	got, err := s.Preferences(ctx, "ken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Rule: never call him bro", "Prefers: no time mentions unless decisive"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	fs, _ := s.SearchPersonFacts(ctx, []string{"ken"}, "bro", 5, false)
+	if len(fs) == 0 {
+		t.Fatal("rule fact not found")
+	}
+	s.InvalidateFactID(ctx, fs[0].ID, TierOwner, "changed mind")
+	if got, _ := s.Preferences(ctx, "ken"); len(got) != 1 {
+		t.Fatalf("invalidated rule still shown: %q", got)
+	}
+	for _, p := range []string{"no emoji", "English replies", "short answers", "tea talk", "morning greetings", "cat pictures", "jazz songs"} {
+		s.AddPersonFacts(ctx, "bo", owner, []string{"Prefers: " + p})
+	}
+	if got, _ := s.Preferences(ctx, "bo"); len(got) != MaxPreferences {
+		t.Fatalf("got %d preferences, want cap %d", len(got), MaxPreferences)
+	}
+}

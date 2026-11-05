@@ -640,3 +640,25 @@ func (s *Store) MergePerson(ctx context.Context, from, to string) (bool, error) 
 	}
 	return true, tx.Commit()
 }
+
+// MaxPreferences caps the standing preferences shown per prompt (K1).
+const MaxPreferences = 5
+
+// Preferences returns a person's standing preferences for every prompt (K1):
+// valid owner-tier facts labelled "Prefers:" or "Rule:", newest first.
+func (s *Store) Preferences(ctx context.Context, key string) ([]string, error) {
+	if key == "" {
+		return nil, nil
+	}
+	facts, err := s.queryFacts(ctx, MaxPreferences, map[int64]bool{}, nil,
+		`SELECT `+factCols+` FROM person_facts f WHERE f.person = ? AND f.invalid_at IS NULL AND f.tier = ?
+		 AND (lower(f.text) LIKE 'prefers:%' OR lower(f.text) LIKE 'rule:%') ORDER BY f.id DESC`, key, string(TierOwner))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(facts))
+	for _, f := range facts {
+		out = append(out, f.Text)
+	}
+	return out, nil
+}
