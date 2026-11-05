@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,14 +37,13 @@ import (
 )
 
 type bot struct {
-	cfg       *config.Config
-	wa        *whatsmeow.Client
-	db        *store.Store
-	claude    llm.Client
-	http      *llm.Tool  // I1: http_request, offered to everyone who can trigger the bot (I2)
-	httpOwner *llm.Tool  // I4: http_request with stored API keys, for whitelisted requesters
-	mcp       []llm.Tool // I1: MCP tools, offered only to whitelisted requesters (I2)
-	chatMu    sync.Map   // chat JID -> *sync.Mutex, one Claude call per chat at a time
+	cfg    *config.Config
+	wa     *whatsmeow.Client
+	db     *store.Store
+	claude llm.Client
+	http   *llm.Tool  // I1: http_request, offered to everyone who can trigger the bot (I2)
+	mcp    []llm.Tool // I1: MCP tools, offered only to whitelisted requesters (I2)
+	chatMu sync.Map   // chat JID -> *sync.Mutex, one Claude call per chat at a time
 
 	curator   llm.Client             // H1: background knowledge passes, no web tools
 	curMu     sync.Mutex             // one curator pass at a time
@@ -60,6 +61,14 @@ type bot struct {
 
 	wlMu  sync.RWMutex
 	wlLID map[string]bool // configured LIDs plus LIDs resolved from phone numbers
+
+	// I4, L1: stored API keys. httpOwner is http_request with the keys, for
+	// whitelisted requesters; /key replaces it.
+	keysMu      sync.Mutex
+	keys        tools.Keys
+	keysPath    string
+	httpOwner   atomic.Pointer[llm.Tool]
+	newHTTPTool func(tools.Keys) llm.Tool
 }
 
 func main() {
@@ -119,12 +128,15 @@ func main() {
 		h := tools.HTTPTool(hc, nil)
 		b.http, b.mcp = &h, mcpTools.Tools()
 		// I4: stored API keys, used by http_request for whitelisted requesters only.
-		keys, err := tools.LoadKeys(filepath.Join(cfg.DataDir, "api_keys.json"))
+		b.keysPath = filepath.Join(cfg.DataDir, "api_keys.json")
+		b.newHTTPTool = func(k tools.Keys) llm.Tool { return tools.HTTPTool(hc, k) }
+		keys, err := tools.LoadKeys(b.keysPath)
 		if err != nil {
 			log.Printf("api keys: %v", err)
 		}
-		hk := tools.HTTPTool(hc, keys)
-		b.httpOwner = &hk
+		b.keys = keys
+		hk := b.newHTTPTool(keys)
+		b.httpOwner.Store(&hk)
 		log.Printf("api tools: http_request for everyone, stored keys for %d hosts and %d MCP tools for whitelisted requesters", len(keys), len(b.mcp))
 	}
 	{ // J5: resume the learned ratio for this model
@@ -392,6 +404,17 @@ func (b *bot) onMessage(e *events.Message) {
 	lid, pn := b.identify(ctx, e.Info.Sender, e.Info.SenderAlt)
 	wl := b.allowed(lid, pn)
 
+	// L1, L2: owner commands, handled here and never stored or shown to the
+	// model, so a token sent with /key stays out of history and prompts.
+	cmdText := text
+	if isGroup {
+		_, cmdText = b.addressed(e.Message, text)
+	}
+	if cmd, ok := router.ParseCommand(cmdText); ok && img == nil {
+		b.command(ctx, e, cmd, isGroup, wl)
+		return
+	}
+
 	addressed := false
 	if isGroup {
 		addressed, text = b.addressed(e.Message, text)
@@ -488,8 +511,8 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	toolset := append(turn.Tools(), turn.ScheduleTools()...)
 	switch {
-	case line.Whitelisted && b.httpOwner != nil: // I4: stored keys are owner-only
-		toolset = append(toolset, *b.httpOwner)
+	case line.Whitelisted && b.httpOwner.Load() != nil: // I4: stored keys are owner-only
+		toolset = append(toolset, *b.httpOwner.Load())
 	case b.http != nil:
 		toolset = append(toolset, *b.http)
 	}
@@ -1154,4 +1177,106 @@ func (b *bot) curateTags(ctx context.Context, chat string, handles map[string]st
 		}
 	}
 	return saved
+}
+
+const keyUsage = "Usage:\n- /key: list hosts with a stored key\n- /key <host> <token>: save it as a Bearer token\n- /key <host> <Header-Name>: <value>: save a custom header\n- /key <host> remove: delete it"
+
+var headerName = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+
+// command runs an owner command (L1, L2). Commands from anyone else are
+// dropped without a reply; the message is never stored either way.
+func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command, isGroup, wl bool) {
+	chat := e.Info.Chat
+	if !wl {
+		log.Printf("ignored /%s from non-owner %s", cmd.Name, e.Info.Sender)
+		return
+	}
+	switch cmd.Name {
+	case "reset":
+		chatKey := chat.String()
+		unlock := b.lock(chatKey)
+		defer unlock()
+		b.curIdleMu.Lock()
+		if t := b.curIdle[chatKey]; t != nil {
+			t.Stop()
+			delete(b.curIdle, chatKey)
+		}
+		b.curIdleMu.Unlock()
+		// Let the curator read what's unread first, so no facts are lost.
+		if lines, err := b.db.TakeUnread(ctx, chatKey, 1); err != nil {
+			log.Printf("reset: take unread: %v", err)
+		} else if len(lines) > 0 {
+			b.curate(chatKey, lines)
+		}
+		n, err := b.db.ResetChat(ctx, chatKey)
+		if err != nil {
+			log.Printf("reset %s: %v", chatKey, err)
+			b.send(ctx, chat, "Reset failed; nothing was cleared.", e)
+			return
+		}
+		log.Printf("reset %s: dropped %d messages and the summary", chatKey, n)
+		b.send(ctx, chat, "Chat context cleared: I start fresh from here. Facts, memories and reminders are kept.", e)
+	case "key":
+		if isGroup {
+			log.Printf("refused /key in group %s", chat)
+			b.send(ctx, chat, "Not here: everyone in this group can read that. Revoke that token now, then send /key to me in a DM.", e)
+			return
+		}
+		if e.Info.IsFromMe || b.newHTTPTool == nil {
+			if b.newHTTPTool == nil {
+				b.send(ctx, chat, "API tools are off (API_TOOLS=false), so keys can't be used.", e)
+			}
+			return
+		}
+		b.send(ctx, chat, b.keyCommand(cmd.Args), e)
+	}
+}
+
+// keyCommand applies /key and returns the reply. It never echoes a secret.
+func (b *bot) keyCommand(args []string) string {
+	b.keysMu.Lock()
+	defer b.keysMu.Unlock()
+	if len(args) == 0 {
+		if len(b.keys) == 0 {
+			return "No stored keys.\n\n" + keyUsage
+		}
+		return "Stored keys for: " + strings.Join(b.keys.Hosts(), ", ")
+	}
+	host := tools.NormalizeHost(args[0])
+	if host == "" || len(args) < 2 {
+		return keyUsage
+	}
+	next := tools.Keys{}
+	for h, hs := range b.keys {
+		next[h] = hs
+	}
+	var done string
+	switch {
+	case len(args) == 2 && strings.EqualFold(args[1], "remove"):
+		if next[host] == nil {
+			return "No key stored for " + host + "."
+		}
+		delete(next, host)
+		done = "Removed the key for " + host + "."
+	case strings.HasSuffix(args[1], ":") && len(args) >= 3 && headerName.MatchString(strings.TrimSuffix(args[1], ":")):
+		next[host] = map[string]string{strings.TrimSuffix(args[1], ":"): strings.Join(args[2:], " ")}
+		done = "Saved a key for " + host + " (header " + strings.TrimSuffix(args[1], ":") + ")."
+	case len(args) == 2:
+		next[host] = map[string]string{"Authorization": "Bearer " + args[1]}
+		done = "Saved a key for " + host + " (Bearer token)."
+	default:
+		return keyUsage
+	}
+	if err := tools.SaveKeys(b.keysPath, next); err != nil {
+		log.Printf("save api keys: %v", err)
+		return "Couldn't save the key file; nothing changed."
+	}
+	b.keys = next
+	t := b.newHTTPTool(next)
+	b.httpOwner.Store(&t)
+	log.Printf("api keys: %s (%d hosts)", done, len(next))
+	if !strings.HasPrefix(done, "Removed") {
+		done += " Now delete your message with the token from this chat."
+	}
+	return done
 }

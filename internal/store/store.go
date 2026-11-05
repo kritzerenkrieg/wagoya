@@ -503,3 +503,23 @@ func (s *Store) UnreadCount(ctx context.Context, chat string) (int, error) {
 		AND id > coalesce((SELECT last_id FROM curator_state WHERE chat = ?), 0)`, chat, chat).Scan(&n)
 	return n, err
 }
+
+// ResetChat drops a chat's transcript and rolling summary (L2). Facts,
+// memories and scheduled jobs stay. Message ids keep growing, so the
+// curator's read position stays valid.
+func (s *Store) ResetChat(ctx context.Context, chat string) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE chat = ?`, chat)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chat_summary WHERE chat = ?`, chat); err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, tx.Commit()
+}

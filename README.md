@@ -37,7 +37,8 @@ wagoya remembers people, not just conversations.
 
 - **`http_request`:** call any public HTTP API. Big responses (like a 400 KB OpenAPI file) can be searched with `find` or paged with `offset`, so the model reads an app's API docs instead of guessing. Pages that only render with JavaScript are read through the app's API instead.
 - **MCP client:** list servers in `data/mcp.json` (the same format as Claude Desktop / Claude Code), local commands or remote URLs, and their tools become available to the model as `mcp__<server>__<tool>`. Uses the official MCP Go SDK.
-- **Who can use them:** anyone who can trigger the bot can use `http_request`; MCP tools are for whitelisted owners only. `http_request` refuses loopback, private, link-local and metadata addresses at connect time, so nobody can reach the server's own network through it.
+- **Stored API keys:** owners save a key once, with `/key <host> <token>` in a DM to the bot or in `data/api_keys.json`, and `http_request` adds it to https requests to that host for owners only. The model never sees the key.
+- **Who can use them:** anyone who can trigger the bot can use `http_request`; MCP tools and stored keys are for whitelisted owners only. `http_request` refuses loopback, private, link-local and metadata addresses at connect time, so nobody can reach the server's own network through it.
 
 ```json
 {"mcpServers": {
@@ -53,6 +54,7 @@ wagoya remembers people, not just conversations.
 - **Group rules:** the bot only stays in groups that a whitelisted member added it to and that still contain one; otherwise it leaves.
 - **Ban-safe pacing:** all outgoing messages are globally spaced (default 1 every 3 s) and queued, never dropped.
 - **Web:** web search and link reading run as server-side tools on the provider.
+- **Owner commands:** handled by the bot itself, never stored or sent to the model. `/reset` clears the chat's transcript and summary for a fresh start (facts, memories and reminders stay). `/key` manages stored API keys, in a DM only. Commands from anyone else are ignored.
 - **Prompt-injection hardening:** chat text, names and quotes are neutralised so they can't close or fake the prompt's sections. Owners are identified by WhatsApp ID, not by what a message claims.
 
 ### Model providers
