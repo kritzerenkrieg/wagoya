@@ -67,3 +67,30 @@ func TestCooldown(t *testing.T) {
 		t.Fatal("denial after cooldown blocked")
 	}
 }
+
+func TestFlood(t *testing.T) {
+	f := NewFlood(3, time.Minute)
+	t0 := time.Unix(1000, 0)
+	if f.Note("a", t0, "1") != nil || f.Note("a", t0.Add(10*time.Second), "2") != nil {
+		t.Fatal("tripped early")
+	}
+	if f.Note("b", t0.Add(11*time.Second), "x") != nil {
+		t.Fatal("people are counted separately")
+	}
+	got := f.Note("a", t0.Add(20*time.Second), "3")
+	if len(got) != 3 || got[0].Text != "1" || got[2].Text != "3" {
+		t.Fatalf("trip: %+v", got)
+	}
+	if f.Note("a", t0.Add(21*time.Second), "4") != nil || f.Note("a", t0.Add(22*time.Second), "5") != nil {
+		t.Fatal("re-arm needs limit new messages")
+	}
+	if f.Note("a", t0.Add(23*time.Second), "6") == nil {
+		t.Fatal("no second trip")
+	}
+	// Spread out: never 3 within a minute.
+	for i := 0; i < 6; i++ {
+		if f.Note("c", t0.Add(time.Duration(i)*35*time.Second), "s") != nil {
+			t.Fatalf("tripped on slow messages at %d", i)
+		}
+	}
+}

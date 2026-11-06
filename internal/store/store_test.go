@@ -527,3 +527,55 @@ func TestOlderMessages(t *testing.T) {
 		t.Fatalf("window: %q", text(h))
 	}
 }
+
+func TestMutesAndSpend(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	s.SetClock(func() time.Time { return now })
+	muted := func(k string) bool {
+		m, err := s.Muted(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	if muted("a") {
+		t.Fatal("muted by default")
+	}
+	s.SetMute(ctx, "a", "Andi", time.Time{}, "owner")
+	s.SetMute(ctx, "b", "Budi", now.Add(5*time.Minute), "flood")
+	s.SetMute(ctx, "c", "Cici", now.Add(-time.Minute), "flood") // already over
+	if !muted("a") || !muted("b") || muted("c") {
+		t.Fatal("mute state wrong")
+	}
+	ms, _ := s.Mutes(ctx)
+	if len(ms) != 2 || ms[0].Name != "Budi" || ms[1].Name != "Andi" || !ms[1].Until.IsZero() {
+		t.Fatalf("list: %+v", ms)
+	}
+	now = now.Add(6 * time.Minute)
+	if muted("b") || !muted("a") {
+		t.Fatal("timeout didn't end, or forever mute did")
+	}
+	if ok, _ := s.Unmute(ctx, "a"); !ok || muted("a") {
+		t.Fatal("unmute")
+	}
+	if ok, _ := s.Unmute(ctx, "c"); ok {
+		t.Fatal("unmute of an ended timeout reported active")
+	}
+
+	if v, _ := s.Spend(ctx, "2026-11-06"); v != 0 {
+		t.Fatal("spend not zero")
+	}
+	s.AddSpend(ctx, "2026-11-06", 0.25)
+	if v, _ := s.AddSpend(ctx, "2026-11-06", 0.5); v != 0.75 {
+		t.Fatalf("total %v", v)
+	}
+	if v, _ := s.Spend(ctx, "2026-11-07"); v != 0 {
+		t.Fatal("days not separate")
+	}
+}

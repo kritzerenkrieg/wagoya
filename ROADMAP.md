@@ -128,6 +128,15 @@ flowchart LR
 - [ ] Bigger window and argument sides (L7, L8). Done when: the golden case "summary keeps who holds which side" passes, the full golden set still passes with the new prompt rules, and live, after a long group argument Rin states each person's side correctly.
 - [ ] Older chat context on demand (L9). Done when: store tests cover the 72-hour retention (window kept, other chats excluded) and search, the golden case "looks up an older message with chat_history" passes, and live, Rin finds something said earlier the same day that has left the window.
 
+## Phase M: Flood control
+
+**Goal:** one person (or a crowd) can't run up the model bill; owners can silence someone without the model.
+**Exit:** a flood is cut off after about 10 messages, with no model calls for the flooder after that, and spend never passes $2 a day for non-owners.
+
+- [ ] Flood timeout (M1). Done when: flood tracker tests cover trip, re-arm and window; the golden cases "flood check says SPAM for a flood" and "flood check says OK for fast chat" pass; and live, a burst of 10+ junk messages gets one notice and no more replies for 5 minutes.
+- [ ] `/mute` and `/unmute` (M2). Done when: command and store tests cover mute, timed mute, unmute and listing; and live, a muted member's @mentions get no reply and don't appear in Rin's transcript.
+- [ ] Daily spend cap (M3). Done when: store tests cover spend per day, and live, the cost log shows a running daily total.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**
