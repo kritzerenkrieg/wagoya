@@ -267,3 +267,12 @@ func TestBuildPromptStates(t *testing.T) {
 		t.Fatalf("got:\n%s", got)
 	}
 }
+
+// L5: group members get the next free handles; known keys keep theirs.
+func TestAddHandles(t *testing.T) {
+	h := map[string]string{"P1": "ken", "P2": "omar"}
+	AddHandles(h, []string{"omar", "", "budi", "ana", "budi"})
+	if len(h) != 4 || h["P3"] != "budi" || h["P4"] != "ana" || h["P2"] != "omar" {
+		t.Fatalf("got %v", h)
+	}
+}

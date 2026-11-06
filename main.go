@@ -62,6 +62,9 @@ type bot struct {
 	wlMu  sync.RWMutex
 	wlLID map[string]bool // configured LIDs plus LIDs resolved from phone numbers
 
+	membersMu sync.Mutex
+	members   map[string]memberCache // L5: group chat -> members, cached
+
 	// I4, L1: stored API keys. httpOwner is http_request with the keys, for
 	// whitelisted requesters; /key replaces it.
 	keysMu      sync.Mutex
@@ -499,7 +502,13 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	system := router.SystemPrompt(b.cfg.BotName, persona, b.claude.SupportsTools())
 	handles := router.AssignHandles(history, &line)
-	people := b.people(ctx, handles, history, line)
+	var members map[string]member
+	if isGroup { // L5: members who haven't spoken get handles too
+		var keys []string
+		keys, members = b.groupMembers(ctx, chat)
+		router.AddHandles(handles, keys)
+	}
+	people := b.people(ctx, handles, history, line, members)
 
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
 	// J3: memory is written with checked tools; tags only in CLI mode.
@@ -584,9 +593,14 @@ func personKey(lid, pn string) string {
 
 // people builds the <people> section: one entry per handle, requester first,
 // with their latest name, whitelist status and recent facts (D3, D5).
-func (b *bot) people(ctx context.Context, handles map[string]string, history []router.Line, req router.Line) []router.Person {
+func (b *bot) people(ctx context.Context, handles map[string]string, history []router.Line, req router.Line, members map[string]member) []router.Person {
 	names := map[string]string{}
 	wl := map[string]bool{}
+	for h, k := range handles { // L5: members known only from the group list
+		if m, ok := members[k]; ok {
+			names[h], wl[h] = m.Name, m.Whitelisted
+		}
+	}
 	for _, l := range append(append([]router.Line{}, history...), req) {
 		if l.Handle == "" {
 			continue
@@ -1334,4 +1348,95 @@ func logStats(what string, st llm.Stats) {
 		web = fmt.Sprintf(", %d web searches", st.WebSearches)
 	}
 	log.Printf("cost %s: $%.5f, %d rounds, %d prompt + %d output tokens%s", what, st.Cost, st.Rounds, st.PromptTokens, st.OutputTokens, web)
+}
+
+// ---- L5: group member awareness ----
+
+// MaxMembers caps the extra group members shown in a prompt.
+const MaxMembers = 40
+
+const membersTTL = 10 * time.Minute
+
+type member struct {
+	Name        string
+	Whitelisted bool
+}
+
+type memberCache struct {
+	at      time.Time
+	keys    []string
+	members map[string]member
+}
+
+// groupMembers lists a group's members with a known name (profile name
+// first, else their WhatsApp push name), people the bot already knows first,
+// at most MaxMembers, without the bot. Cached for membersTTL.
+func (b *bot) groupMembers(ctx context.Context, chat types.JID) ([]string, map[string]member) {
+	b.membersMu.Lock()
+	if c, ok := b.members[chat.String()]; ok && time.Since(c.at) < membersTTL {
+		b.membersMu.Unlock()
+		return c.keys, c.members
+	}
+	b.membersMu.Unlock()
+	g, err := b.wa.GetGroupInfo(ctx, chat)
+	if err != nil {
+		log.Printf("group members %s: %v", chat, err)
+		return nil, nil
+	}
+	var known, other []string
+	members := map[string]member{}
+	for _, p := range g.Participants {
+		if b.isMe(p.JID) || (!p.LID.IsEmpty() && b.isMe(p.LID)) {
+			continue
+		}
+		alt := p.LID
+		if alt.IsEmpty() {
+			alt = p.PhoneNumber
+		}
+		lid, pn := b.identify(ctx, p.JID, alt)
+		key := personKey(lid, pn)
+		if key == "" {
+			continue
+		}
+		name, _ := b.db.PersonName(ctx, key)
+		isKnown := name != ""
+		if name == "" {
+			for _, j := range []types.JID{p.JID, p.LID, p.PhoneNumber} {
+				if j.IsEmpty() {
+					continue
+				}
+				if c, err := b.wa.Store.Contacts.GetContact(ctx, j); err == nil && c.Found {
+					for _, n := range []string{c.FullName, c.PushName, c.FirstName} {
+						if strings.TrimSpace(n) != "" {
+							name = n
+							break
+						}
+					}
+				}
+				if name != "" {
+					break
+				}
+			}
+		}
+		if name == "" {
+			continue // a handle without a name helps nobody
+		}
+		members[key] = member{Name: name, Whitelisted: b.allowed(lid, pn)}
+		if isKnown {
+			known = append(known, key)
+		} else {
+			other = append(other, key)
+		}
+	}
+	keys := append(known, other...)
+	if len(keys) > MaxMembers {
+		keys = keys[:MaxMembers]
+	}
+	b.membersMu.Lock()
+	if b.members == nil {
+		b.members = map[string]memberCache{}
+	}
+	b.members[chat.String()] = memberCache{at: time.Now(), keys: keys, members: members}
+	b.membersMu.Unlock()
+	return keys, members
 }
