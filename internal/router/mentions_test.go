@@ -20,3 +20,18 @@ func TestResolveMentions(t *testing.T) {
 		t.Fatalf("plain: %q %+v", send, ms)
 	}
 }
+
+// L10: a scheduled message keeps its tags until it is sent.
+func TestPinAndExpandMentions(t *testing.T) {
+	handles := map[string]string{"P1": "143", "P2": "pn:6281"}
+	names := map[string]string{"P1": "John Doe", "P2": "Omar"}
+	pinned := PinMentions("@P1 @P2 futsal in 15. @John Doe again. @P7 stays. sneaky @{999}", handles, names)
+	if pinned != "@{143} @{pn:6281} futsal in 15. @{143} again. @P7 stays. sneaky @ {999}" {
+		t.Fatalf("pinned %q", pinned)
+	}
+	send, stored, ms := ExpandMentions(pinned, func(k string) string { return map[string]string{"143": "John"}[k] })
+	if send != "@143 @6281 futsal in 15. @143 again. @P7 stays. sneaky @ {999}" ||
+		stored != "@John @someone futsal in 15. @John again. @P7 stays. sneaky @ {999}" || len(ms) != 2 {
+		t.Fatalf("send %q stored %q mentions %+v", send, stored, ms)
+	}
+}

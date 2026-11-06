@@ -28,6 +28,7 @@ type Turn struct {
 	DB        *store.Store
 	Chat      string
 	Handles   map[string]string // "P1" -> person key
+	Names     map[string]string // "P1" -> display name, for "@Full Name" tags in scheduled text (L10)
 	Requester router.Line       // its Handle and Whitelisted matter
 	Spoke     map[string]bool   // handles with a message in this prompt
 	Curator   bool              // a curator pass (H1): everything it saves is inferred (J4)

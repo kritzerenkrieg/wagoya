@@ -138,3 +138,21 @@ func TestDueAction(t *testing.T) {
 		t.Fatalf("weekdays: %v %v", send, next)
 	}
 }
+
+// L10: "@P1" in a scheduled message is stored as the person's key, so it
+// still tags them when it is sent, and lists show their name.
+func TestSchedulePinsMentions(t *testing.T) {
+	db := openDB(t)
+	db.UpsertPerson(context.Background(), "john", "john", "", "John", clock)
+	run := schedTurn(t, db, john, "g@g.us", true) // John is P1 in this turn
+	if got := run("schedule_message", `{"text":"@P1 futsal in 15 minutes. @P9 too","in_minutes":30}`); !strings.HasPrefix(got, "scheduled") {
+		t.Fatalf("schedule: %q", got)
+	}
+	jobs, _ := db.ListJobs(context.Background(), "g@g.us", "")
+	if len(jobs) != 1 || jobs[0].Text != "@{john} futsal in 15 minutes. @P9 too" {
+		t.Fatalf("stored: %+v", jobs)
+	}
+	if got := run("list_scheduled", `{}`); !strings.Contains(got, "| @John futsal in 15 minutes.") {
+		t.Fatalf("list: %q", got)
+	}
+}
