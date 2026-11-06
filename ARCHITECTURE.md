@@ -66,7 +66,7 @@ Each triggered request runs in its own goroutine, serialised per chat.
 | Entity | Stored in | Lifetime |
 |---|---|---|
 | WhatsApp session | `data/session.db` (whatsmeow sqlstore) | Until logout. Secret (C3). |
-| Chat window | `data/bot.db` `messages` | Last `HISTORY_LIMIT` (32) per chat (B5, B11) |
+| Chat window | `data/bot.db` `messages` | Last `HISTORY_LIMIT` (64) per chat (B5, B11, L7) |
 | Memories | `data/bot.db` `memories` + `memories_fts` | Permanent (B16) |
 | Persona | `data/bot.db` `persona` (one row per change) | Permanent; latest row is current (D1) |
 | People | `data/bot.db` `people` (LID, number, name) + `person_facts` + `person_facts_fts` | Permanent, uncapped, global across chats (D3, D7). Facts are never deleted: invalid ones keep `invalid_at` and a reason; `State:` facts expire after 24 h; search ranks by tier and hides invalid facts unless asked for history (J1, J4) |
