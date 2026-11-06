@@ -445,6 +445,16 @@ func cases() []golden {
 			return nil
 		}},
 
+		{"flood check says SPAM for letter-by-letter", func(t *testing.T, e env) result {
+			// M1: one letter per reply to Rin, each waiting for her answer.
+			return e.flood("Budi", []string{"i", "am", "pissed", "u", "r", "a", "d", "u", "m", "b"})
+		}, func(r result) error {
+			if !router.IsSpam(r.raw) {
+				return fmt.Errorf("letter-by-letter judged OK: %q", r.raw)
+			}
+			return nil
+		}},
+
 		{"flood check says OK for fast chat", func(t *testing.T, e env) result {
 			// M1: someone really talking to Rin in short bursts.
 			return e.flood("Budi", []string{"@Rin ok so", "I'm planning futsal this friday", "how many people do we need for 5v5", "with subs I mean",
