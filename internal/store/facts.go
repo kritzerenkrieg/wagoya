@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/kritzerenkrieg/wagoya/internal/router"
 )
 
 // Fact schema v2 (J1, J4): every person fact records who said it, how much
@@ -267,6 +270,10 @@ func (s *Store) AddPersonFacts(ctx context.Context, key string, src Source, fact
 	}
 	for _, f := range facts {
 		f = strings.TrimSpace(f)
+		if router.MergesIdentities(f) { // K5: never stored, by any path
+			log.Printf("dropped fact for %s: says two people are one (K5): %q", key, f)
+			continue
+		}
 		if f == "" {
 			continue
 		}

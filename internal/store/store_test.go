@@ -579,3 +579,23 @@ func TestMutesAndSpend(t *testing.T) {
 		t.Fatal("days not separate")
 	}
 }
+
+// K5: no path stores a fact or memory saying two people are one.
+func TestIdentityMergesNotStored(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	s.UpsertPerson(ctx, "ken", "ken", "", "Ken", time.Now())
+	s.AddPersonFacts(ctx, "ken", Source{Chat: "g", Tier: TierInferred}, []string{"Claim: Ken and Budi are the same person", "Likes: chess"})
+	s.AddMemories(ctx, "g", []router.Memory{{Category: "fact", Text: "Ken and Budi are interchangeable"}, {Category: "plan", Text: "Futsal Friday"}})
+	facts, _ := s.PersonFacts(ctx, []string{"ken"})
+	if len(facts["ken"]) != 1 || !strings.Contains(facts["ken"][0], "chess") {
+		t.Fatalf("facts: %v", facts["ken"])
+	}
+	if m, _ := s.SearchMemories(ctx, "g", "Ken Budi interchangeable futsal", 10); len(m) != 1 || m[0].Text != "Futsal Friday" {
+		t.Fatalf("memories: %+v", m)
+	}
+}

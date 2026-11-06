@@ -251,6 +251,10 @@ func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error)
 // kept forever (B16).
 func (s *Store) AddMemories(ctx context.Context, chat string, mems []router.Memory) error {
 	for _, m := range mems {
+		if router.MergesIdentities(m.Text) { // K5
+			log.Printf("dropped memory in %s: says two people are one (K5): %q", chat, m.Text)
+			continue
+		}
 		if _, err := s.db.ExecContext(ctx,
 			`INSERT OR IGNORE INTO memories(chat, category, text, ts) VALUES (?,?,?,?)`,
 			chat, m.Category, m.Text, time.Now().Unix()); err != nil {
