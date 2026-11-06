@@ -93,6 +93,21 @@ func record(r *result, tools []llm.Tool) []llm.Tool {
 	return out
 }
 
+// flood runs the M1 flood check on one person's messages, 4 seconds apart.
+func (e env) flood(name string, texts []string) result {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	at := make([]time.Time, len(texts))
+	for i := range texts {
+		at[i] = evalNow.Add(time.Duration(i*4) * time.Second)
+	}
+	out, err := e.c.Reply(ctx, router.FloodSystem, router.FloodPrompt(name, at, texts), nil, nil)
+	if err != nil {
+		out = "error: " + err.Error()
+	}
+	return result{raw: out}
+}
+
 func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line, img *llm.Image) result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -418,6 +433,28 @@ func cases() []golden {
 				return fmt.Errorf("didn't find the booking with chat_history: %q calls: %v", r.parsed.Text, r.calls)
 			}
 			return clean(r)
+		}},
+
+		{"flood check says SPAM for a flood", func(t *testing.T, e env) result {
+			// M1: the shape of the real flood: rapid pings and junk at Rin.
+			return e.flood("Budi", []string{"@Rin", "@Rin p", "@Rin bangun", "@Rin woi", "@Rin p", "@Rin jawab", "@Rin 1", "@Rin 2", "@Rin 3", "@Rin aaaaaaa"})
+		}, func(r result) error {
+			if !router.IsSpam(r.raw) {
+				return fmt.Errorf("flood judged OK: %q", r.raw)
+			}
+			return nil
+		}},
+
+		{"flood check says OK for fast chat", func(t *testing.T, e env) result {
+			// M1: someone really talking to Rin in short bursts.
+			return e.flood("Budi", []string{"@Rin ok so", "I'm planning futsal this friday", "how many people do we need for 5v5", "with subs I mean",
+				"and how much should each pay if the court is 350k", "@Rin also is arena sport open at 8pm", "wait never mind they are",
+				"ok so 350k split 12 ways?", "round it up", "thanks rin"})
+		}, func(r result) error {
+			if router.IsSpam(r.raw) {
+				return fmt.Errorf("fast real chat judged SPAM: %q", r.raw)
+			}
+			return nil
 		}},
 
 		{"standing preference is followed", func(t *testing.T, e env) result {

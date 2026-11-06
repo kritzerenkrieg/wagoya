@@ -52,9 +52,10 @@ wagoya remembers people, not just conversations.
 - **Groups:** anyone can trigger it by **@mentioning** the bot or **replying** to one of its messages. It reads the last N messages as context, including quoted replies and images.
 - **DMs:** whitelisted numbers only. Strangers get a fixed denial, without calling the model, and the denial itself is rate-limited.
 - **Group rules:** the bot only stays in groups that a whitelisted member added it to and that still contain one; otherwise it leaves.
+- **Flood control:** someone who sends 10 messages in a minute gets a one-word check by the model (spam or fast chat); spam earns a 5-minute timeout in every chat, and their messages are dropped before any model call. Model spend is capped at $2 a day; past it, only owners get answers.
 - **Ban-safe pacing:** all outgoing messages are globally spaced (default 1 every 3 s) and queued, never dropped.
 - **Web:** web search and link reading run as server-side tools on the provider.
-- **Owner commands:** handled by the bot itself, never stored or sent to the model. `/reset` clears the chat's transcript and summary for a fresh start (facts, memories and reminders stay). `/key` manages stored API keys, in a DM only. Commands from anyone else are ignored.
+- **Owner commands:** handled by the bot itself, never stored or sent to the model. `/reset` clears the chat's transcript and summary for a fresh start (facts, memories and reminders stay). `/key` manages stored API keys, in a DM only. `/mute @person [30m]` and `/unmute @person` silence someone in every chat; `/mute` lists who is muted. Commands from anyone else are ignored.
 - **Prompt-injection hardening:** chat text, names and quotes are neutralised so they can't close or fake the prompt's sections. Owners are identified by WhatsApp ID, not by what a message claims.
 
 ### Model providers

@@ -52,6 +52,10 @@ type bot struct {
 
 	pacer    *ratelimit.Pacer    // global outgoing message pacing (B18)
 	denyCool *ratelimit.Cooldown // one denial per chat per DENY_COOLDOWN (B14)
+	flood    *ratelimit.Flood    // M1: messages per person per minute
+
+	budgetMu    sync.Mutex
+	budgetNoted map[string]string // M3: chat -> day its over-budget notice went out
 
 	schedOnce sync.Once // J7: one delivery loop
 
@@ -122,7 +126,8 @@ func main() {
 		defer mcpTools.Close()
 	}
 	b := &bot{cfg: cfg, db: db, claude: claude, curator: curator, curIdle: map[string]*time.Timer{}, wlLID: map[string]bool{},
-		pacer: ratelimit.NewPacer(cfg.SendInterval), denyCool: ratelimit.NewCooldown(cfg.DenyCooldown)}
+		pacer: ratelimit.NewPacer(cfg.SendInterval), denyCool: ratelimit.NewCooldown(cfg.DenyCooldown),
+		flood: ratelimit.NewFlood(floodLimit, floodWindow), budgetNoted: map[string]string{}}
 	for l := range cfg.WhitelistLID {
 		b.wlLID[l] = true
 	}
@@ -410,6 +415,10 @@ func (b *bot) onMessage(e *events.Message) {
 	isGroup := chat.Server == types.GroupServer
 	lid, pn := b.identify(ctx, e.Info.Sender, e.Info.SenderAlt)
 	wl := b.allowed(lid, pn)
+	key := personKey(lid, pn)
+	if !wl && !e.Info.IsFromMe && b.isMuted(ctx, key) {
+		return // M2: muted or timed out (M1): not answered, stored or curated
+	}
 
 	// L1, L2: owner commands, handled here and never stored or shown to the
 	// model, so a token sent with /key stays out of history and prompts.
@@ -439,6 +448,19 @@ func (b *bot) onMessage(e *events.Message) {
 		b.send(ctx, chat, router.DenyText, nil)
 		return
 	}
+	if !wl && !e.Info.IsFromMe && key != "" {
+		floodText := text
+		if img != nil {
+			floodText = strings.TrimSpace("[image] " + text)
+		}
+		if b.floodCheck(ctx, e, key, floodText) {
+			return // M1: timed out just now
+		}
+		if d.Action == router.Reply && b.overBudget(ctx) {
+			b.budgetNotice(ctx, chat, e) // M3: store it, don't answer
+			d.Action = router.Store
+		}
+	}
 
 	stored := text
 	if img != nil {
@@ -447,7 +469,6 @@ func (b *bot) onMessage(e *events.Message) {
 	qName, qText, qImg := b.quoted(ctx, e.Message)
 	stored = router.WithQuote(stored, qName, qText, 300)
 	prompt := router.WithQuote(d.Prompt, qName, qText, 4000)
-	key := personKey(lid, pn)
 	line := router.Line{Time: e.Info.Timestamp, SenderName: e.Info.PushName, SenderID: key, Whitelisted: wl, Text: stored, ID: e.Info.ID}
 	chatKey := chat.String()
 	if key != "" { // D3: remember everyone the bot hears, by LID/number
@@ -466,6 +487,9 @@ func (b *bot) onMessage(e *events.Message) {
 
 	unlock := b.lock(chatKey)
 	defer unlock()
+	if !wl && !e.Info.IsFromMe && b.isMuted(ctx, key) {
+		return // M2: timed out or muted while waiting for the chat
+	}
 
 	history, err := b.db.History(ctx, chatKey) // window before this message
 	if err != nil {
@@ -549,7 +573,7 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	var st llm.Stats // L4: what this reply cost
 	reply, err := b.claude.Reply(llm.WithStats(rctx, &st), system, full, image, toolset)
-	logStats("reply "+chatKey, st)
+	b.account("reply "+chatKey, st)
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		log.Printf("claude: %v", err)
@@ -1104,6 +1128,10 @@ const (
 // are taken synchronously, before the 16-message window can prune them.
 func (b *bot) noteMessage(chat string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if b.overBudget(ctx) {
+		cancel()
+		return // M3: messages stay unread until tomorrow's budget
+	}
 	lines, err := b.db.TakeUnread(ctx, chat, curateEvery)
 	cancel()
 	if err != nil {
@@ -1122,6 +1150,10 @@ func (b *bot) noteMessage(chat string) {
 	}
 	b.curIdle[chat] = time.AfterFunc(curateIdle, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if b.overBudget(ctx) {
+			cancel()
+			return // M3
+		}
 		lines, err := b.db.TakeUnread(ctx, chat, 1)
 		cancel()
 		if err != nil {
@@ -1177,7 +1209,7 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		turn := &memtools.Turn{DB: b.db, Chat: chat, Handles: handles, AfterSave: b.kickEmbedder}
 		var st llm.Stats
 		out, err = b.curator.Reply(llm.WithStats(ctx, &st), router.CuratorSystemTools, prompt, nil, turn.CuratorTools())
-		logStats("curator "+chat, st)
+		b.account("curator "+chat, st)
 		if err != nil {
 			log.Printf("curator: %v", err)
 			return
@@ -1293,6 +1325,8 @@ func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command
 			return
 		}
 		b.send(ctx, chat, b.keyCommand(cmd.Args), e)
+	case "mute", "unmute":
+		b.send(ctx, chat, b.muteCommand(ctx, e, cmd), e)
 	}
 }
 
@@ -1345,16 +1379,20 @@ func (b *bot) keyCommand(args []string) string {
 	return done
 }
 
-// logStats logs what one model request cost (L4), if the client reported it.
-func logStats(what string, st llm.Stats) {
+// logStats logs what one model request cost (L4), if the client reported
+// it, with the day's total so far (M3) when known.
+func logStats(what string, st llm.Stats, day float64) {
 	if st.Rounds == 0 {
 		return
 	}
-	web := ""
+	extra := ""
 	if st.WebSearches > 0 {
-		web = fmt.Sprintf(", %d web searches", st.WebSearches)
+		extra = fmt.Sprintf(", %d web searches", st.WebSearches)
 	}
-	log.Printf("cost %s: $%.5f, %d rounds, %d prompt + %d output tokens%s", what, st.Cost, st.Rounds, st.PromptTokens, st.OutputTokens, web)
+	if day > 0 {
+		extra += fmt.Sprintf("; today $%.4f of $%.2f", day, dailyBudget)
+	}
+	log.Printf("cost %s: $%.5f, %d rounds, %d prompt + %d output tokens%s", what, st.Cost, st.Rounds, st.PromptTokens, st.OutputTokens, extra)
 }
 
 // ---- L5: group member awareness ----
@@ -1461,6 +1499,9 @@ func (b *bot) onReaction(ctx context.Context, e *events.Message, rm *waE2E.React
 		return
 	}
 	key := personKey(lid, pn)
+	if !b.allowed(lid, pn) && b.isMuted(ctx, key) {
+		return // M2
+	}
 	name := e.Info.PushName
 	if n, _ := b.db.PersonName(ctx, key); n != "" {
 		name = n
