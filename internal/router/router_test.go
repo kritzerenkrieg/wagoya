@@ -285,3 +285,26 @@ func TestRenderReactions(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestBuildPromptReminders(t *testing.T) {
+	now := time.Date(2026, 11, 6, 17, 10, 0, 0, time.Local)
+	out := BuildPrompt(Prompt{Now: now, Reminders: []Reminder{
+		{At: time.Date(2026, 11, 6, 18, 45, 0, 0, time.Local), Text: "futsal in 15 minutes. 7 PM, as usual."},
+		{At: time.Date(2026, 11, 7, 7, 0, 0, 0, time.Local), Text: "Wake up", Repeat: "daily"},
+		{At: time.Date(2026, 11, 9, 9, 0, 0, 0, time.Local), Text: "Standup"},
+	}, Requester: Line{SenderName: "John"}, Text: "how long until the match?"})
+	for _, want := range []string{
+		"- 18:45 today (in 1h35m): futsal in 15 minutes. 7 PM, as usual.",
+		"- 07:00 tomorrow (in 13h50m, repeats daily): Wake up",
+		"- Mon 2026-11-09 09:00 (in 63h50m): Standup",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	for d, want := range map[time.Duration]string{-time.Minute: "due now", 12 * time.Minute: "in 12m", 2 * time.Hour: "in 2h"} {
+		if got := until(d); got != want {
+			t.Errorf("until(%v) = %q, want %q", d, got, want)
+		}
+	}
+}

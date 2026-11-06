@@ -503,6 +503,14 @@ func (b *bot) onMessage(e *events.Message) {
 	if err != nil {
 		log.Printf("summary: %v", err)
 	}
+	var reminders []router.Reminder // N3
+	if jobs, err := b.db.ListJobs(ctx, chatKey, ""); err != nil {
+		log.Printf("reminders: %v", err)
+	} else {
+		for _, j := range jobs {
+			reminders = append(reminders, router.Reminder{At: j.NextAt, Text: j.Text, Repeat: j.Repeat})
+		}
+	}
 	mems, err := b.db.SearchMemories(ctx, chatKey, prompt, b.cfg.MemoryResults)
 	if err != nil {
 		log.Printf("memories: %v", err)
@@ -564,7 +572,7 @@ func (b *bot) onMessage(e *events.Message) {
 		toolBytes += len(t.Name) + len(t.Description) + len(j)
 	}
 	full := router.FitPromptWith(system, router.Prompt{
-		Memories: mems, Summary: summary, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(), Group: isGroup,
+		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(), Group: isGroup,
 	}, b.cfg.ContextTokens, b.ratio.BytesPerToken(), toolBytes)
 	rctx := ctx
 	if image == nil {

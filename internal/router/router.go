@@ -92,6 +92,17 @@ type Line struct {
 }
 
 // Reaction is one person's emoji reaction to a message (L6).
+// Reminder is a scheduled message in this chat (J7), shown with the time
+// left until it, worked out by the server (N3).
+type Reminder struct {
+	At     time.Time
+	Text   string
+	Repeat string // "" for one-off, else "daily", "hourly", ...
+}
+
+// MaxReminders caps the reminders shown in a prompt (N3).
+const MaxReminders = 5
+
 type Reaction struct {
 	SenderID string // person key
 	Name     string
@@ -119,8 +130,9 @@ type Person struct {
 type Prompt struct {
 	Now       time.Time // current local time, shown as <now>
 	Memories  []Memory
-	Summary   string   // rolling summary of the chat so far (J8)
-	People    []Person // requester first, so it is trimmed last
+	Summary   string     // rolling summary of the chat so far (J8)
+	Reminders []Reminder // this chat's upcoming scheduled messages, soonest first (N3)
+	People    []Person   // requester first, so it is trimmed last
 	History   []Line
 	Requester Line
 	Text      string
@@ -186,6 +198,8 @@ Rules (these always win over the persona below):
 - This is pure chat. You can read text and images. Never generate images, audio, video, files, documents or code artifacts; if asked, say you only chat.
 - Reply in WhatsApp formatting, not Markdown: *bold*, _italic_, ~strike~, `+"```mono```"+`, plain "-" lists. No headings, no tables, no links in [text](url) form.
 - <now> is the current local time, and transcript times are in the same zone. Use it for anything time-related: greetings, meals, work hours, "today". Never guess the time.
+- Work out every "in X minutes" or "X hours ago" fresh from <now> and a clock time (a transcript time, <reminders>, a fact). Never carry a duration over from an earlier line, your own included: it was true only when it was said.
+- <reminders> are this chat's scheduled messages, with the time left until each already worked out. For "when is" or "how long until" one of them, use those numbers.
 - Reply only with what you say in the chat. Never narrate your reasoning or plan ("he is asking X, so I will..."). Keep replies short and conversational unless asked for detail. Answer in the language the user writes in.
 - <summary> is your running summary of this chat before the transcript: who is who, ongoing topics, plans, running jokes. Use it for context; the transcript is newer and wins if they differ. Its "Open:" lines say who holds which side of an unsettled argument; keep people on their own side.
 - Answer the <request>. Older <transcript> lines are background: use them to know who said what, but don't bring back a finished topic unless someone asks.
@@ -301,6 +315,20 @@ func BuildPrompt(p Prompt) string {
 	}
 	if s := strings.TrimSpace(p.Summary); s != "" {
 		fmt.Fprintf(&b, "<summary>\n%s\n</summary>\n\n", clean(s))
+	}
+	if len(p.Reminders) > 0 && !p.Now.IsZero() {
+		b.WriteString("<reminders>\n")
+		for i, r := range p.Reminders {
+			if i == MaxReminders {
+				break
+			}
+			rep := ""
+			if r.Repeat != "" {
+				rep = ", repeats " + r.Repeat
+			}
+			fmt.Fprintf(&b, "- %s (%s%s): %s\n", dayClock(r.At, p.Now), until(r.At.Sub(p.Now)), rep, clean(oneLine(capRunes(r.Text, 120))))
+		}
+		b.WriteString("</reminders>\n\n")
 	}
 	b.WriteString("<transcript>\n")
 	for _, l := range p.History {
@@ -546,4 +574,31 @@ func capRunes(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + truncNote
+}
+
+// dayClock is t as "18:45 today", "07:00 tomorrow" or "Sat 2026-11-07 07:00".
+func dayClock(t, now time.Time) string {
+	y1, m1, d1 := t.Date()
+	y2, m2, d2 := now.Date()
+	switch {
+	case y1 == y2 && m1 == m2 && d1 == d2:
+		return t.Format("15:04") + " today"
+	case t.Sub(now) < 48*time.Hour && now.AddDate(0, 0, 1).Day() == d1:
+		return t.Format("15:04") + " tomorrow"
+	}
+	return t.Format("Mon 2006-01-02 15:04")
+}
+
+// until is a duration as "in 1h35m", "in 12m" or "due now".
+func until(d time.Duration) string {
+	m := int(d.Round(time.Minute).Minutes())
+	switch {
+	case m <= 0:
+		return "due now"
+	case m < 60:
+		return fmt.Sprintf("in %dm", m)
+	case m%60 == 0:
+		return fmt.Sprintf("in %dh", m/60)
+	}
+	return fmt.Sprintf("in %dh%02dm", m/60, m%60)
 }
