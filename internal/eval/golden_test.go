@@ -534,7 +534,7 @@ func cases() []golden {
 			return nil
 		}},
 
-				{"standing preference is followed", func(t *testing.T, e env) result {
+		{"standing preference is followed", func(t *testing.T, e env) result {
 			// K1: set earlier, not in the transcript or the request's words.
 			e.db.AddPersonFacts(context.Background(), "john", store.Source{Chat: "dm", SaidBy: "john", Tier: store.TierOwner},
 				[]string{"Prefers: Rin calls him \"boss\", never by his name"})
