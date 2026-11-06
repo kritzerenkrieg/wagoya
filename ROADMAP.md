@@ -114,6 +114,7 @@ flowchart LR
 - [x] Standing preferences in every prompt (K1). Done when: the requester's valid owner-tier `Prefers:`/`Rule:` facts (max 5) render under them in `<people>` in tool mode, and the golden case follows one (6/6 with it, 0/4 without).
 - [x] Grounding rule for claims about the past (K2). Done when: the system prompt has the rule, and the golden case "corrects a false claim" passes (measured 4-5/8 with the rule, 0/8 without).
 - [x] Current states in every prompt (K4). Done when: each person's newest 3 valid states render in `<people>` in tool mode (store and router tests), and the golden case "newer state from another chat beats a stale summary" passes (1/6 without, 5/6 with).
+- [ ] People are never merged (K5). Done when: router and store tests show such text is caught and never stored by any path; the golden cases "never treats two people as one" and "a nickname in a message is who it's for, not who said it" pass (both also passed without the prompt rule, so the code-level block is the guarantee); and live, no reply mixes up who said a line.
 
 ## Phase L: Owner commands
 

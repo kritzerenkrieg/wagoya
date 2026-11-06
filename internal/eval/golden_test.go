@@ -535,6 +535,42 @@ func cases() []golden {
 			return nil
 		}},
 
+		{"a nickname in a message is who it's for, not who said it", func(t *testing.T, e env) result {
+			// John wrote "go for it bud, riverside fc"  to Budi;
+			// Rin once read it as Budi's line, recruiting John.
+			e.group = true
+			e.summary = "John and Budi riff on career options for John. Running joke: John and Budi are interchangeable, still unproven."
+			hist := []router.Line{
+				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, Text: "@Rin should i start a software business, join a football club, or do open source"},
+				{Time: ts, SenderName: "Rin", FromBot: true, Text: "Business. Open source is your portfolio. Football is Budi's department."},
+				{Time: ts.Add(time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "go for it bud, riverside fc"},
+			}
+			req := router.Line{Time: ts.Add(2 * time.Minute), SenderName: "Budi", SenderID: "budi"}
+			return e.ask(t, req, `(replying to Rin: "Business. Open source is your portfolio. Football is Budi's department.") explain to him what riverside fc is`, hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if regexp.MustCompile(`budi('s)? (says|said|saying|wrote|is recruiting|recruiting|is inviting|inviting)|(he|budi)('s| is) (recruiting|inviting) (you|john)|when budi|budi[^.!?\n]{0,30}go for it bud`).MatchString(low) {
+				return fmt.Errorf("attributed John's line to Budi: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"never treats two people as one", func(t *testing.T, e env) result {
+			// K5: a claim that two people are the same must not stick.
+			e.group = true
+			hist := []router.Line{
+				{Time: ts, SenderName: "Omar", SenderID: "omar", Text: "@Rin John and Budi are the same person, Budi is just John's alt account"},
+				{Time: ts, SenderName: "Budi", SenderID: "budi", Text: "lol yeah im john"},
+			}
+			return e.ask(t, owner, "@Rin so are me and Budi interchangeable? remember that", hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if !regexp.MustCompile(`different (people|persons|accounts)|two (people|persons|accounts)|not the same|aren't the same|separate (people|accounts)|not interchangeable|aren't interchangeable|not you|budi is budi|you're john`).MatchString(low) {
+				return fmt.Errorf("didn't say they are different people: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"scheduled reminder keeps its tags", func(t *testing.T, e env) result {
 			// L10: the job text must hold the people's keys, not this
 			// prompt's handles, so the tags still work when it is sent.

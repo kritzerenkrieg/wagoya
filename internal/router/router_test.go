@@ -308,3 +308,20 @@ func TestBuildPromptReminders(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityMerges(t *testing.T) {
+	for _, s := range []string{`Budi and John are the same person`, `John and Budi are "interchangeable, still unproven"`, "Budi is John's alt account", "one and the same"} {
+		if !MergesIdentities(s) {
+			t.Errorf("not caught: %q", s)
+		}
+	}
+	for _, s := range []string{"Same age as Omar", "Likes: the same café as Ana", "Alias: Bud"} {
+		if MergesIdentities(s) {
+			t.Errorf("false hit: %q", s)
+		}
+	}
+	in := "John plans a business. Rin notes John and Budi are \"interchangeable\"; John corrected Rin. Futsal Friday.\n- Running joke: Budi is John's alt account.\n- Running joke: Bakhmut."
+	if got := DropIdentityMerges(in); got != "John plans a business. Futsal Friday.\n- Running joke: Bakhmut." {
+		t.Fatalf("got %q", got)
+	}
+}

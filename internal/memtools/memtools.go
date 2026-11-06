@@ -234,6 +234,8 @@ func (t *Turn) saveFact(ctx context.Context, subject, content, kind, source stri
 		return "", fmt.Errorf("kind must be one of %v", kinds)
 	case source != "" && !slices.Contains(sources, source):
 		return "", fmt.Errorf("source must be one of %v", sources)
+	case router.MergesIdentities(content):
+		return "", errors.New("not saved: never record that two people are the same person, interchangeable or alts; each person is their own account")
 	}
 	var key, who string
 	if h := strings.ToUpper(subject); handleRe.MatchString(h) {
@@ -372,6 +374,8 @@ func (t *Turn) saveMemoryTool() llm.Tool {
 				return "error: content is empty"
 			case utf8.RuneCountInString(text) > maxMemory:
 				return fmt.Sprintf("error: content is too long (max %d characters)", maxMemory)
+			case router.MergesIdentities(text):
+				return "error: not saved: never record that two people are the same person, interchangeable or alts"
 			}
 			if err := t.DB.AddMemories(ctx, t.Chat, []router.Memory{{Category: cat, Text: text}}); err != nil {
 				log.Printf("save memory: %v", err)
