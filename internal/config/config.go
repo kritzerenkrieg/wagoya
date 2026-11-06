@@ -140,7 +140,7 @@ func Load() (*Config, error) {
 	}
 	c.WhitelistPN, c.WhitelistLID = ParseWhitelist(get("WHITELIST", ""))
 	var err error
-	if c.HistoryLimit, err = getInt("HISTORY_LIMIT", 32); err != nil {
+	if c.HistoryLimit, err = getInt("HISTORY_LIMIT", 64); err != nil {
 		return nil, err
 	}
 	if c.MemoryResults, err = getInt("MEMORY_RESULTS", 8); err != nil {

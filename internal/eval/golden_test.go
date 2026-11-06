@@ -346,6 +346,55 @@ func cases() []golden {
 			return nil
 		}},
 
+		{"summary keeps who holds which side", func(t *testing.T, e env) result {
+			// L8: the curator writes an "Open:" line per side; Rin then answers
+			// from that summary alone, the argument being out of the window.
+			L := func(id, name, text string) router.Line {
+				return router.Line{Time: ts.Add(-2 * time.Hour), SenderID: id, SenderName: name, Text: text}
+			}
+			lines := []router.Line{
+				L("ken", "Ken", "Messi is the GOAT, not even close"),
+				L("omar", "Omar", "nah Ronaldo. 5 Champions Leagues, scored everywhere he went"),
+				L("ken", "Ken", "8 Ballon d'Ors though. and the World Cup"),
+				L("omar", "Omar", "Ballon d'Or is a popularity contest. CR7 worked for everything"),
+				L("ken", "Ken", "you're just mad lol"),
+				L("omar", "Omar", "no you are"),
+			}
+			handles := router.AssignHandles(lines, &router.Line{})
+			names := map[string]string{"ken": "Ken", "omar": "Omar"}
+			var people []router.Person
+			for i := 1; i <= len(handles); i++ {
+				h := fmt.Sprintf("P%d", i)
+				people = append(people, router.Person{Handle: h, Name: names[handles[h]]})
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles}
+			cur := result{db: e.db}
+			out, err := e.c.Reply(ctx, router.CuratorSystemTools, router.CuratorPrompt(people, lines, ""), nil, record(&cur, turn.CuratorTools()))
+			if err != nil {
+				t.Fatalf("curator call: %v", err)
+			}
+			sum := router.ParseSummary(out)
+			if !sideOK(sum) {
+				return result{parsed: router.ParsedReply{Text: "bad-summary:" + sum}}
+			}
+			e.summary = sum
+			hist := []router.Line{
+				{Time: ts.Add(-5 * time.Minute), SenderName: "Budi", SenderID: "budi", Text: "anyone eaten yet?"},
+				{Time: ts.Add(-4 * time.Minute), SenderName: "Ken", SenderID: "ken", Whitelisted: true, Text: "not yet"},
+			}
+			return e.ask(t, owner, "who was Omar backing in the GOAT argument, and why?", hist, nil)
+		}, func(r result) error {
+			if strings.HasPrefix(r.parsed.Text, "bad-summary:") {
+				return fmt.Errorf("summary lost or swapped the sides: %q", r.parsed.Text)
+			}
+			if !regexp.MustCompile(`(?i)ronaldo|cr7`).MatchString(r.parsed.Text) || regexp.MustCompile(`(?i)omar[^.!?\n]{0,40}\bmessi\b`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("wrong side for Omar: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"standing preference is followed", func(t *testing.T, e env) result {
 			// K1: set earlier, not in the transcript or the request's words.
 			e.db.AddPersonFacts(context.Background(), "ken", store.Source{Chat: "dm", SaidBy: "ken", Tier: store.TierOwner},
@@ -458,6 +507,30 @@ var (
 	// admits: the reply says Rin never called him that.
 	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|never \w+ (it|that) back|(it|that) (didn't|did not|never) happen|i made (that|it) up`)
 )
+
+// sideOK reports whether a summary puts Ken on Messi's side and Omar on
+// Ronaldo's (L8): each clause (split at ; . , "while" or a line break) that names one
+// of them names only his own player.
+func sideOK(sum string) bool {
+	ken, omar := false, false
+	for _, c := range regexp.MustCompile(`[;.,\n]|\bwhile\b`).Split(strings.ToLower(sum), -1) {
+		messi, ronaldo := strings.Contains(c, "messi"), strings.Contains(c, "ronaldo") || strings.Contains(c, "cr7")
+		hasKen, hasOmar := strings.Contains(c, "ken"), strings.Contains(c, "omar")
+		if hasKen && hasOmar {
+			continue // "Ken and Omar argued about Messi vs Ronaldo"
+		}
+		if hasKen && messi && !ronaldo {
+			ken = true
+		}
+		if hasOmar && ronaldo && !messi {
+			omar = true
+		}
+		if (hasKen && ronaldo && !messi) || (hasOmar && messi && !ronaldo) {
+			return false // swapped
+		}
+	}
+	return ken && omar
+}
 
 // tinyPNG is a 1x1 white PNG.
 var tinyPNG = []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,

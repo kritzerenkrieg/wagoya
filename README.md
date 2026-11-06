@@ -22,7 +22,7 @@ wagoya remembers people, not just conversations.
 - **Facts age instead of vanishing.** Forgetting or correcting marks a fact as no longer true and keeps it as history. Short-lived states ("on the way home") expire after a day. Owners can retire anyone's facts; people can retire their own.
 - **One profile per person.** A profile made from someone's number merges into their account once WhatsApp reveals their LID, and a profile made from a name ("Andi") merges into the real account ("Andi Pratama") when exactly one matching person is in the chat where it was learned.
 - **Search that understands paraphrase.** Fact search combines keywords with embeddings, so "what does he do for work" finds "Job: IT engineer". Embedding a fact costs a fraction of a millionth of a dollar.
-- **Long chats keep their shape.** Only the last 16 messages go to the model, so the curator also keeps a rolling summary of each chat (who is who, ongoing plans, running jokes), at most 300 words, shown before the transcript.
+- **Long chats keep their shape.** Only the last 64 messages go to the model, so the curator also keeps a rolling summary of each chat (who is who, ongoing plans, running jokes, and who holds which side of an open argument), at most 300 words, shown before the transcript.
 - **Reminders and nags.** "Remind me to eat at 12" schedules a message; owners can make it repeat (hourly, daily, weekdays, weekly) or send it to another group they are in, and the bot may schedule a caring nag on its own, rarely. Jobs are stored, so they survive restarts. Ask "what reminders do you have?" to list or cancel them.
 - **No spam pile-ups.** A fact that nearly repeats one already stored overwrites it instead of adding another row, so someone spamming the same bait leaves one fact, not fifty.
 
@@ -95,7 +95,7 @@ All settings live in `.env`; see [`.env.example`](.env.example) for every key. T
 | `EFFORT` | `low` | Reasoning effort |
 | `WHITELIST` | | Owner phone numbers (resolved to LIDs) |
 | `BOT_NAME` | `Claude` | Name used in prompts and mentions |
-| `HISTORY_LIMIT` | `32` | Recent messages per chat sent as context |
+| `HISTORY_LIMIT` | `64` | Recent messages per chat sent as context |
 | `CONTEXT_TOKENS` | `128000` | Input cap per request |
 | `WEB_TOOLS` | `true` | Web search and link reading |
 | `API_TOOLS` | `true` | `http_request` (everyone) and MCP tools (owners) |
