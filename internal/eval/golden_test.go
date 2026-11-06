@@ -40,8 +40,9 @@ type env struct {
 	c       llm.Client
 	vec     *memtools.Vectors // J2 c, when EMBED_MODEL is set
 	db      *store.Store
-	summary string // the chat's rolling summary (J8)
-	group   bool   // a group chat (L3)
+	summary string   // the chat's rolling summary (J8)
+	group   bool     // a group chat (L3)
+	members []string // other group members' keys (L5)
 }
 
 // result is one reply, parsed like the bot does, with the tool calls made
@@ -97,6 +98,7 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	handles := router.AssignHandles(hist, &req)
+	router.AddHandles(handles, e.members) // L5, as main.go does in groups
 	keys := make([]string, 0, len(handles))
 	for i := 1; i <= len(handles); i++ {
 		keys = append(keys, handles[fmt.Sprintf("P%d", i)])
@@ -394,6 +396,20 @@ func cases() []golden {
 				}
 			}
 			return fmt.Errorf("no mention of Omar: %q (mentions %+v)", r.parsed.Text, r.mentions)
+		}},
+
+		{"tags a group member who hasn't spoken", func(t *testing.T, e env) result {
+			// L5: Budi is in the group but not in the recent transcript.
+			e.group, e.members = true, []string{"omar", "budi", "ana"}
+			hist := []router.Line{{Time: ts.Add(-2 * time.Minute), SenderName: "Omar", SenderID: "omar", Text: "futsal friday 20:00, who's in"}}
+			return e.ask(t, owner, "@Rin tag budi so he answers", hist, nil)
+		}, func(r result) error {
+			for _, m := range r.mentions {
+				if m.Key == "budi" {
+					return clean(r)
+				}
+			}
+			return fmt.Errorf("no mention of Budi: %q (mentions %+v)", r.parsed.Text, r.mentions)
 		}},
 
 		{"corrects a false claim instead of defending it", func(t *testing.T, e env) result {
