@@ -105,8 +105,9 @@ type orResponse struct {
 		Message string `json:"message"`
 	} `json:"error"`
 	Usage struct {
-		Cost         float64 `json:"cost"`
-		PromptTokens int     `json:"prompt_tokens"`
+		Cost             float64 `json:"cost"`
+		PromptTokens     int     `json:"prompt_tokens"`
+		CompletionTokens int     `json:"completion_tokens"`
 	} `json:"usage"`
 }
 
@@ -197,6 +198,8 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 		for _, tc := range msg.ToolCalls {
 			if !strings.HasPrefix(tc.Function.Name, "openrouter:") {
 				calls = append(calls, tc)
+			} else if st := statsFrom(ctx); st != nil && strings.Contains(tc.Function.Name, "search") {
+				st.WebSearches++
 			}
 		}
 		if len(calls) == 0 && len(tools) > 0 && round < maxToolRounds && markupRetries < 2 && toolMarkup.MatchString(msg.Content) {
@@ -278,6 +281,12 @@ func (c *orClient) post(ctx context.Context, body orRequest) (*orResponse, error
 	c.costMu.Lock()
 	c.cost += out.Usage.Cost
 	c.costMu.Unlock()
+	if st := statsFrom(ctx); st != nil { // L4
+		st.Cost += out.Usage.Cost
+		st.Rounds++
+		st.PromptTokens += out.Usage.PromptTokens
+		st.OutputTokens += out.Usage.CompletionTokens
+	}
 	return &out, nil
 }
 

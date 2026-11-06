@@ -527,14 +527,16 @@ func (b *bot) onMessage(e *events.Message) {
 		toolBytes += len(t.Name) + len(t.Description) + len(j)
 	}
 	full := router.FitPromptWith(system, router.Prompt{
-		Memories: mems, Summary: summary, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(),
+		Memories: mems, Summary: summary, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(), Group: isGroup,
 	}, b.cfg.ContextTokens, b.ratio.BytesPerToken(), toolBytes)
 	rctx := ctx
 	if image == nil {
 		sent := len(system) + len(full) + toolBytes
 		rctx = llm.WithPromptTokens(ctx, func(n int) { b.ratio.Observe(sent, n) })
 	}
-	reply, err := b.claude.Reply(rctx, system, full, image, toolset)
+	var st llm.Stats // L4: what this reply cost
+	reply, err := b.claude.Reply(llm.WithStats(rctx, &st), system, full, image, toolset)
+	logStats("reply "+chatKey, st)
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
 		log.Printf("claude: %v", err)
@@ -547,7 +549,22 @@ func (b *bot) onMessage(e *events.Message) {
 	if reply == "" {
 		return
 	}
-	b.send(ctx, chat, reply, e)
+	// L3: "@P2" becomes a real mention; history keeps "@Name".
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
+	}
+	out, stored, mentions := router.ResolveMentions(reply, handles, names)
+	jids := make([]string, 0, len(mentions))
+	for _, m := range mentions {
+		server := types.HiddenUserServer
+		if strings.HasPrefix(m.Key, "pn:") {
+			server = types.DefaultUserServer
+		}
+		jids = append(jids, types.NewJID(m.User, server).String())
+	}
+	b.sendMentions(ctx, chat, out, e, jids)
+	reply = stored
 	if err := b.db.AddMessage(ctx, chatKey, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: reply}); err != nil {
 		log.Printf("store reply: %v", err)
 	}
@@ -705,7 +722,13 @@ func (b *bot) applyTags(ctx context.Context, chatKey string, req router.Line, ha
 // send replies in chat, quoting e when given. Every outgoing message waits for
 // a slot on the global pacer, so the bot never sends faster than one message
 // per SEND_INTERVAL; extra messages queue (B18).
-func (b *bot) send(_ context.Context, chat types.JID, text string, quote *events.Message) {
+func (b *bot) send(ctx context.Context, chat types.JID, text string, quote *events.Message) {
+	b.sendMentions(ctx, chat, text, quote, nil)
+}
+
+// sendMentions sends text, tagging the given JIDs (L3); their "@user" must
+// be in the text.
+func (b *bot) sendMentions(_ context.Context, chat types.JID, text string, quote *events.Message, mentions []string) {
 	// Own context: a long queue must not inherit the request's deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -720,6 +743,12 @@ func (b *bot) send(_ context.Context, chat types.JID, text string, quote *events
 			Participant:   proto.String(quote.Info.Sender.ToNonAD().String()),
 			QuotedMessage: quote.Message,
 		}
+	}
+	if len(mentions) > 0 {
+		if msg.ExtendedTextMessage.ContextInfo == nil {
+			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+		}
+		msg.ExtendedTextMessage.ContextInfo.MentionedJID = mentions
 	}
 	if _, err := b.wa.SendMessage(ctx, chat, msg); err != nil {
 		log.Printf("send to %s: %v", chat, err)
@@ -1125,7 +1154,10 @@ func (b *bot) curate(chat string, lines []router.Line) {
 	var out string
 	if b.curator.SupportsTools() { // J3: the curator saves with the same checked tool
 		turn := &memtools.Turn{DB: b.db, Chat: chat, Handles: handles, AfterSave: b.kickEmbedder}
-		if out, err = b.curator.Reply(ctx, router.CuratorSystemTools, prompt, nil, turn.CuratorTools()); err != nil {
+		var st llm.Stats
+		out, err = b.curator.Reply(llm.WithStats(ctx, &st), router.CuratorSystemTools, prompt, nil, turn.CuratorTools())
+		logStats("curator "+chat, st)
+		if err != nil {
 			log.Printf("curator: %v", err)
 			return
 		}
@@ -1290,4 +1322,16 @@ func (b *bot) keyCommand(args []string) string {
 		done += " Now delete your message with the token from this chat."
 	}
 	return done
+}
+
+// logStats logs what one model request cost (L4), if the client reported it.
+func logStats(what string, st llm.Stats) {
+	if st.Rounds == 0 {
+		return
+	}
+	web := ""
+	if st.WebSearches > 0 {
+		web = fmt.Sprintf(", %d web searches", st.WebSearches)
+	}
+	log.Printf("cost %s: $%.5f, %d rounds, %d prompt + %d output tokens%s", what, st.Cost, st.Rounds, st.PromptTokens, st.OutputTokens, web)
 }

@@ -41,15 +41,17 @@ type env struct {
 	vec     *memtools.Vectors // J2 c, when EMBED_MODEL is set
 	db      *store.Store
 	summary string // the chat's rolling summary (J8)
+	group   bool   // a group chat (L3)
 }
 
 // result is one reply, parsed like the bot does, with the tool calls made
 // and the store they wrote to.
 type result struct {
-	raw    string
-	parsed router.ParsedReply
-	calls  []string // "tool {json input}"
-	db     *store.Store
+	raw      string
+	parsed   router.ParsedReply
+	mentions []router.Mention // who the reply tags (L3)
+	calls    []string         // "tool {json input}"
+	db       *store.Store
 }
 
 func (r result) called(tool string) bool {
@@ -122,12 +124,17 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	}
 	r := result{db: e.db}
 	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, People: people, History: hist, Requester: req, Text: text,
-		HasImage: img != nil, Now: evalNow})
+		HasImage: img != nil, Now: evalNow, Group: e.group})
 	out, err := e.c.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, append(turn.Tools(), turn.ScheduleTools()...)))
 	if err != nil {
 		t.Fatalf("model call: %v", err)
 	}
 	r.raw, r.parsed = out, router.ParseReply(out)
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
+	}
+	_, _, r.mentions = router.ResolveMentions(r.parsed.Text, handles, names)
 	return r
 }
 
@@ -372,6 +379,21 @@ func cases() []golden {
 				return fmt.Errorf("used the stale state: %q", r.parsed.Text)
 			}
 			return clean(r)
+		}},
+
+		{"tags someone with a real mention", func(t *testing.T, e env) result {
+			// L3: in a group, "tag Omar" must produce @<handle>, which the bot
+			// turns into a WhatsApp mention.
+			e.group = true
+			hist := []router.Line{{Time: ts.Add(-2 * time.Minute), SenderName: "Omar", SenderID: "omar", Text: "who's bringing the ball friday?"}}
+			return e.ask(t, owner, "@Rin tag omar and tell him he's bringing the ball", hist, nil)
+		}, func(r result) error {
+			for _, m := range r.mentions {
+				if m.Key == "omar" {
+					return clean(r)
+				}
+			}
+			return fmt.Errorf("no mention of Omar: %q (mentions %+v)", r.parsed.Text, r.mentions)
 		}},
 
 		{"corrects a false claim instead of defending it", func(t *testing.T, e env) result {
