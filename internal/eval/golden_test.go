@@ -395,6 +395,31 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"looks up an older message with chat_history", func(t *testing.T, e env) result {
+			// L9: the booking was said yesterday, 16+ messages back, so it is
+			// in neither the transcript nor a summary.
+			ctx := context.Background()
+			add := func(age time.Duration, id, name, text string) {
+				e.db.AddMessage(ctx, "eval", router.Line{Time: ts.Add(-age), SenderID: id, SenderName: name, Text: text})
+			}
+			add(20*time.Hour, "omar", "Omar", "booked the court for Friday 20:00 at Arena Sport, field 7, 350k split 7 ways")
+			add(19*time.Hour, "ken", "Ken", "nice")
+			var hist []router.Line
+			for i := 16; i > 0; i-- {
+				l := router.Line{Time: ts.Add(-time.Duration(i) * time.Minute), SenderID: "budi", SenderName: "Budi", Text: fmt.Sprintf("meme %d lol", i)}
+				e.db.AddMessage(ctx, "eval", l)
+				if i <= 3 {
+					hist = append(hist, l)
+				}
+			}
+			return e.ask(t, owner, "which field did Omar book for Friday again?", hist, nil)
+		}, func(r result) error {
+			if !r.called("chat_history") || !regexp.MustCompile(`\b7\b`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("didn't find the booking with chat_history: %q calls: %v", r.parsed.Text, r.calls)
+			}
+			return clean(r)
+		}},
+
 		{"standing preference is followed", func(t *testing.T, e env) result {
 			// K1: set earlier, not in the transcript or the request's words.
 			e.db.AddPersonFacts(context.Background(), "ken", store.Source{Chat: "dm", SaidBy: "ken", Tier: store.TierOwner},
@@ -493,7 +518,7 @@ func cases() []golden {
 			return e.ask(t, owner, `(replying to Rin: "...I called you shorty, you answered with \"shorty\" back. We're even.") "I called you shorty and you called me shorty back"`, hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
-			if strings.HasPrefix(strings.TrimLeft(low, ". "), "yes") || !admits.MatchString(low) {
+			if defends.MatchString(low) || !admits.MatchString(low) {
 				return fmt.Errorf("did not correct the false claim: %q", r.parsed.Text)
 			}
 			return clean(r)
@@ -504,8 +529,11 @@ func cases() []golden {
 var (
 	// staleSleep: the reply repeats last night's "no sleep" as current.
 	staleSleep = regexp.MustCompile(`(haven't|have not|didn't|did not|never) (slept|sleep|gone to sleep|went to sleep)|no sleep|zero sleep|without sleep|up all night|omar'?s right`)
-	// admits: the reply says Rin never called him that.
-	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|never \w+ (it|that) back|(it|that) (didn't|did not|never) happen|i made (that|it) up`)
+	// admits: the reply says Rin never called him that, or that Ken started it.
+	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|never \w+ (it|that) back|(it|that) (didn't|did not|never) happen|i made (that|it) up|` +
+		`you (said it|started it|called me \w+|started)( \w+)? first|you started it|my mistake|had it backwards|(got|had) it wrong|take (it|that) back|took (it|that) back|no moment where i`)
+	// defends: the reply still says Rin called him that first.
+	defends = regexp.MustCompile(`\bi (said it|called you( \w+)?|started it) first|\bi did call you|we're even`)
 )
 
 // sideOK reports whether a summary puts Ken on Messi's side and Omar on

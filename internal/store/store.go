@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS messages (
 	text TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_chat ON messages(chat, id);
+CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts);
 -- Small runtime state, e.g. the learned bytes-per-token ratio (J5).
 CREATE TABLE IF NOT EXISTS settings (
 	key TEXT PRIMARY KEY,
@@ -144,8 +146,13 @@ func Open(path string, historyLimit int) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// AddMessage stores a chat line and trims the chat to the last historyLimit
-// messages (B5, B11).
+// MessageTTL is how long messages older than the window are kept, for the
+// chat_history tool (L9). The window itself is always kept.
+const MessageTTL = 72 * time.Hour
+
+// AddMessage stores a chat line and drops messages that are both outside
+// their chat's last historyLimit (B5, B11) and older than MessageTTL (L9),
+// in every chat, with their reactions (L6).
 func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO messages(chat, ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id) VALUES (?,?,?,?,?,?,?,?)`,
@@ -154,15 +161,64 @@ func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) erro
 		return err
 	}
 	if _, err = s.db.ExecContext(ctx,
-		`DELETE FROM messages WHERE chat = ? AND id NOT IN (SELECT id FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?)`,
-		chat, chat, s.historyLimit); err != nil {
+		`DELETE FROM messages WHERE ts < ? AND id < COALESCE(
+		   (SELECT m.id FROM messages m WHERE m.chat = messages.chat ORDER BY m.id DESC LIMIT 1 OFFSET ?), -1)`,
+		s.now().Add(-MessageTTL).Unix(), s.historyLimit-1); err != nil {
 		return err
 	}
-	// L6: reactions go with the messages they were on.
 	_, err = s.db.ExecContext(ctx,
-		`DELETE FROM reactions WHERE chat = ? AND msg_id NOT IN (SELECT wa_id FROM messages WHERE chat = ?)`, chat, chat)
+		`DELETE FROM reactions WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat = reactions.chat AND m.wa_id = reactions.msg_id)`)
 	return err
 }
+
+// OlderMessages searches chat's messages from before the window (L9): those
+// matching the most words of query first, then newest; an empty query pages
+// back from the window. Results are oldest first.
+func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, offset int) ([]router.Line, error) {
+	var start int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM messages WHERE chat = ? ORDER BY id DESC LIMIT 1 OFFSET ?`, chat, s.historyLimit-1).Scan(&start)
+	if err == sql.ErrNoRows {
+		return nil, nil // the whole chat fits in the window
+	}
+	if err != nil {
+		return nil, err
+	}
+	score, args := "0", []any{}
+	for _, w := range queryWords(query) {
+		pat := "%" + likeEscaper.Replace(w) + "%"
+		score += ` + (text LIKE ? ESCAPE '\') + (sender_name LIKE ? ESCAPE '\')`
+		args = append(args, pat, pat)
+	}
+	q := `SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM
+	        (SELECT *, ` + score + ` AS score FROM messages WHERE chat = ? AND id < ?)`
+	if len(args) > 0 {
+		q += ` WHERE score > 0 ORDER BY score DESC, id DESC`
+	} else {
+		q += ` ORDER BY id DESC`
+	}
+	q += ` LIMIT ? OFFSET ?`
+	args = append(args, chat, start, limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []router.Line
+	for rows.Next() {
+		var l router.Line
+		var ts int64
+		if err := rows.Scan(&ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text, &l.ID); err != nil {
+			return nil, err
+		}
+		l.Time = time.Unix(ts, 0)
+		out = append(out, l)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+	return out, rows.Err()
+}
+
+var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
 
 // History returns the stored window for chat, oldest first.
 func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error) {
@@ -244,6 +300,16 @@ func init() {
 // ftsQuery turns free text into an FTS5 OR-query of quoted words, so user text
 // can never inject FTS syntax.
 func ftsQuery(text string) string {
+	terms := queryWords(text)
+	for i, w := range terms {
+		terms[i] = `"` + w + `"`
+	}
+	return strings.Join(terms, " OR ")
+}
+
+// queryWords are the distinct search words of text: lowercase, at least 3
+// letters, no stopwords, at most 24.
+func queryWords(text string) []string {
 	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
@@ -254,12 +320,12 @@ func ftsQuery(text string) string {
 			continue
 		}
 		seen[w] = true
-		terms = append(terms, `"`+w+`"`)
+		terms = append(terms, w)
 		if len(terms) == 24 {
 			break
 		}
 	}
-	return strings.Join(terms, " OR ")
+	return terms
 }
 
 // Setting returns a stored setting, or "".
