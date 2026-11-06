@@ -18,7 +18,7 @@ import (
 
 const (
 	floodLimit   = 10              // M1: messages per person...
-	floodWindow  = time.Minute     // ...within this window trigger a check
+	floodWindow  = 2 * time.Minute // ...within this window trigger a check
 	floodTimeout = 5 * time.Minute // M1: timeout after a SPAM verdict
 	dailyBudget  = 2.0             // M3: USD per local day of model spend
 )

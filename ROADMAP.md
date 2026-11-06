@@ -131,7 +131,7 @@ flowchart LR
 ## Phase M: Flood control
 
 **Goal:** one person (or a crowd) can't run up the model bill; owners can silence someone without the model.
-**Exit:** a flood is cut off after about 10 messages, with no model calls for the flooder after that, and spend never passes $2 a day for non-owners.
+**Exit:** a flood is cut off after about 10 messages in 2 minutes, with no model calls for the flooder after that, and spend never passes $2 a day for non-owners.
 
 - [ ] Flood timeout (M1). Done when: flood tracker tests cover trip, re-arm and window; the golden cases "flood check says SPAM for a flood" and "flood check says OK for fast chat" pass; and live, a burst of 10+ junk messages gets one notice and no more replies for 5 minutes.
 - [ ] `/mute` and `/unmute` (M2). Done when: command and store tests cover mute, timed mute, unmute and listing; and live, a muted member's @mentions get no reply and don't appear in Rin's transcript.
