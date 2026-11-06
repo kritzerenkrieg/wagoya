@@ -49,7 +49,7 @@ func (t *Turn) reqKey() string { return t.Handles[t.Requester.Handle] }
 
 // Tools returns the memory tools for a reply.
 func (t *Turn) Tools() []llm.Tool {
-	return []llm.Tool{llm.FactSearchTool(t.Search()), t.saveFactTool(), t.invalidateTool(), t.saveMemoryTool()}
+	return []llm.Tool{llm.FactSearchTool(t.Search()), t.saveFactTool(), t.invalidateTool(), t.saveMemoryTool(), t.chatHistoryTool()}
 }
 
 // CuratorTools returns the tools for a curator pass: save_fact only.
@@ -378,6 +378,64 @@ func (t *Turn) saveMemoryTool() llm.Tool {
 			}
 			t.saved.Add(1)
 			return "saved"
+		},
+	}
+}
+
+// historyPage is how many older messages chat_history returns per call (L9).
+const historyPage = 20
+
+// chatHistoryTool searches this chat's messages from before <transcript>,
+// kept for store.MessageTTL (L9). Only this chat: never another chat's.
+func (t *Turn) chatHistoryTool() llm.Tool {
+	return llm.Tool{
+		Name: "chat_history",
+		Description: "Search this chat's older messages, from before <transcript> (kept for the last 3 days only). " +
+			"Use it when someone refers to something said earlier that isn't in <transcript> or <summary>. " +
+			"query: words or a name to look for; empty lists the messages just before <transcript>. page: 0 for the first results, 1 for the next.",
+		Schema: map[string]any{"type": "object", "properties": map[string]any{
+			"query": map[string]any{"type": "string"},
+			"page":  map[string]any{"type": "integer", "minimum": 0},
+		}},
+		Run: func(ctx context.Context, input json.RawMessage) string {
+			var in struct {
+				Query string
+				Page  int
+			}
+			if err := json.Unmarshal(input, &in); err != nil {
+				return "error: invalid input: " + err.Error()
+			}
+			if in.Page < 0 || in.Page > 50 {
+				return "error: page must be 0 to 50"
+			}
+			lines, err := t.DB.OlderMessages(ctx, t.Chat, in.Query, historyPage, in.Page*historyPage)
+			if err != nil {
+				log.Printf("chat history: %v", err)
+				return "error: storage failed"
+			}
+			if len(lines) == 0 {
+				if in.Page > 0 {
+					return "no more older messages"
+				}
+				return "no older messages match (only the last 3 days are kept)"
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "%d older messages from this chat, oldest first:\n", len(lines))
+			for _, l := range lines {
+				who := l.SenderName
+				if l.FromBot {
+					who += " (you)"
+				}
+				text := strings.Join(strings.Fields(l.Text), " ")
+				if r := []rune(text); len(r) > 500 {
+					text = string(r[:500]) + "…"
+				}
+				fmt.Fprintf(&b, "[%s] %s: %s\n", l.Time.Format("2006-01-02 15:04"), who, text)
+			}
+			if len(lines) == historyPage {
+				fmt.Fprintf(&b, "(page %d may have more)", in.Page+1)
+			}
+			return b.String()
 		},
 	}
 }

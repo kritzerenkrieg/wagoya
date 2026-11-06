@@ -468,11 +468,62 @@ func TestReactions(t *testing.T) {
 	if h, _ := s.History(ctx, "g"); len(h[0].Reactions) != 1 || h[0].Reactions[0].Name != "John" {
 		t.Fatalf("after removal: %+v", h[0].Reactions)
 	}
+	s.SetClock(func() time.Time { return now.Add(MessageTTL + time.Hour) }) // L9: past the retention
 	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "a", ID: "m2"})
 	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "b", ID: "m3"}) // m1 pruned
 	var n int
 	s.db.QueryRow(`SELECT count(*) FROM reactions`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("%d reactions left after their message was pruned", n)
+	}
+}
+
+func TestOlderMessages(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now()
+	s.SetClock(func() time.Time { return now })
+	add := func(chat string, age time.Duration, who, text string) {
+		if err := s.AddMessage(ctx, chat, router.Line{Time: now.Add(-age), SenderName: who, SenderID: strings.ToLower(who), Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("g", 80*time.Hour, "John", "too old: futsal booking")
+	add("g", 10*time.Hour, "Omar", "Messi is overrated")
+	add("g", 9*time.Hour, "John", "Messi has 8 Ballon d'Ors")
+	add("g", 8*time.Hour, "Budi", "lunch?")
+	add("other", time.Hour, "Ana", "Messi secret in another chat")
+	add("g", 2*time.Hour, "John", "window one")
+	add("g", time.Hour, "Omar", "window two")
+
+	text := func(ls []router.Line) string {
+		var out []string
+		for _, l := range ls {
+			out = append(out, l.Text)
+		}
+		return strings.Join(out, " | ")
+	}
+	got, err := s.OlderMessages(ctx, "g", "", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Messi is overrated | Messi has 8 Ballon d'Ors | lunch?"; text(got) != want {
+		t.Fatalf("page back: got %q, want %q (80h-old message dropped, window and other chat excluded)", text(got), want)
+	}
+	if got, _ := s.OlderMessages(ctx, "g", "who said Messi ballon", 1, 0); text(got) != "Messi has 8 Ballon d'Ors" {
+		t.Fatalf("best match first: %q", text(got))
+	}
+	if got, _ := s.OlderMessages(ctx, "g", "omar", 10, 0); text(got) != "Messi is overrated" {
+		t.Fatalf("by sender name: %q", text(got))
+	}
+	if got, _ := s.OlderMessages(ctx, "g", "", 10, 3); len(got) != 0 {
+		t.Fatalf("offset past the end: %q", text(got))
+	}
+	if h, _ := s.History(ctx, "g"); text(h) != "window one | window two" {
+		t.Fatalf("window: %q", text(h))
 	}
 }
