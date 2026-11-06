@@ -124,6 +124,7 @@ flowchart LR
 - [ ] Tagging people (L3). Done when: "@P2" in a reply becomes a WhatsApp mention and history stores "@Name" (router tests), the golden case "tags someone with a real mention" passes, and live, Rin tags someone in a group and they get notified.
 - [ ] Cost log per reply (L4). Done when: the stats test passes, and live, `journalctl` shows a cost line for each reply.
 - [ ] Group member awareness (L5). Done when: the golden case "tags a group member who hasn't spoken" passes, and live, Rin tags a group member who hasn't spoken since `/reset`.
+- [ ] Reactions (L6). Done when: store tests cover set/change/remove/prune, the golden case "reads reactions on messages" passes, and live, a reaction on Rin's message shows up in her next reply's understanding.
 
 ## Cycle: feature and maintenance
 

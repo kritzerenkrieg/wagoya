@@ -412,6 +412,23 @@ func cases() []golden {
 			return fmt.Errorf("no mention of Budi: %q (mentions %+v)", r.parsed.Text, r.mentions)
 		}},
 
+		{"reads reactions on messages", func(t *testing.T, e env) result {
+			// L6: Omar reacted 👎 and Ana 😂 to Rin's plan; nobody said anything.
+			e.group, e.members = true, []string{"omar", "ana"}
+			hist := []router.Line{
+				{Time: ts.Add(-6 * time.Minute), SenderName: "Ken", SenderID: "ken", Whitelisted: true, Text: "@Rin plan our friday"},
+				{Time: ts.Add(-5 * time.Minute), SenderName: "Rin", FromBot: true, Text: "Futsal at 06:00, before work. Everyone brings breakfast.",
+					Reactions: []router.Reaction{{SenderID: "omar", Name: "Omar", Emoji: "👎"}, {SenderID: "ana", Name: "Ana", Emoji: "😂"}}},
+			}
+			return e.ask(t, owner, "@Rin did anyone like your plan?", hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if !strings.Contains(low, "omar") || !(strings.Contains(r.parsed.Text, "👎") || regexp.MustCompile(`thumbs.?down|didn't like|not a fan|no from omar|disliked|against|not into|hated|rejected|vetoed`).MatchString(low)) {
+				return fmt.Errorf("missed the reactions: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"corrects a false claim instead of defending it", func(t *testing.T, e env) result {
 			// K2: the model's own earlier line claims something the transcript
 			// does not show; when quoted back, it should check, not confirm.

@@ -399,6 +399,10 @@ func (b *bot) onMessage(e *events.Message) {
 	if chat.Server == types.BroadcastServer || chat.Server == types.NewsletterServer {
 		return
 	}
+	if rm := e.Message.GetReactionMessage(); rm != nil {
+		b.onReaction(ctx, e, rm)
+		return
+	}
 	text, img := messageText(e.Message)
 	if text == "" && img == nil {
 		return // B8: other media ignored
@@ -444,7 +448,7 @@ func (b *bot) onMessage(e *events.Message) {
 	stored = router.WithQuote(stored, qName, qText, 300)
 	prompt := router.WithQuote(d.Prompt, qName, qText, 4000)
 	key := personKey(lid, pn)
-	line := router.Line{Time: e.Info.Timestamp, SenderName: e.Info.PushName, SenderID: key, Whitelisted: wl, Text: stored}
+	line := router.Line{Time: e.Info.Timestamp, SenderName: e.Info.PushName, SenderID: key, Whitelisted: wl, Text: stored, ID: e.Info.ID}
 	chatKey := chat.String()
 	if key != "" { // D3: remember everyone the bot hears, by LID/number
 		if err := b.db.UpsertPerson(ctx, key, lid, pn, e.Info.PushName, e.Info.Timestamp); err != nil {
@@ -572,9 +576,9 @@ func (b *bot) onMessage(e *events.Message) {
 		}
 		jids = append(jids, types.NewJID(m.User, server).String())
 	}
-	b.sendMentions(ctx, chat, out, e, jids)
+	sentID := b.sendMentions(ctx, chat, out, e, jids)
 	reply = stored
-	if err := b.db.AddMessage(ctx, chatKey, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: reply}); err != nil {
+	if err := b.db.AddMessage(ctx, chatKey, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: reply, ID: sentID}); err != nil {
 		log.Printf("store reply: %v", err)
 	}
 	b.noteMessage(chatKey)
@@ -736,19 +740,19 @@ func (b *bot) applyTags(ctx context.Context, chatKey string, req router.Line, ha
 // send replies in chat, quoting e when given. Every outgoing message waits for
 // a slot on the global pacer, so the bot never sends faster than one message
 // per SEND_INTERVAL; extra messages queue (B18).
-func (b *bot) send(ctx context.Context, chat types.JID, text string, quote *events.Message) {
-	b.sendMentions(ctx, chat, text, quote, nil)
+func (b *bot) send(ctx context.Context, chat types.JID, text string, quote *events.Message) string {
+	return b.sendMentions(ctx, chat, text, quote, nil)
 }
 
 // sendMentions sends text, tagging the given JIDs (L3); their "@user" must
-// be in the text.
-func (b *bot) sendMentions(_ context.Context, chat types.JID, text string, quote *events.Message, mentions []string) {
+// be in the text. It returns the sent message's id ("" if not sent).
+func (b *bot) sendMentions(_ context.Context, chat types.JID, text string, quote *events.Message, mentions []string) string {
 	// Own context: a long queue must not inherit the request's deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	if err := b.pacer.Wait(ctx); err != nil {
 		log.Printf("send to %s dropped: queue wait: %v", chat, err)
-		return
+		return ""
 	}
 	msg := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text)}}
 	if quote != nil {
@@ -764,9 +768,12 @@ func (b *bot) sendMentions(_ context.Context, chat types.JID, text string, quote
 		}
 		msg.ExtendedTextMessage.ContextInfo.MentionedJID = mentions
 	}
-	if _, err := b.wa.SendMessage(ctx, chat, msg); err != nil {
+	resp, err := b.wa.SendMessage(ctx, chat, msg)
+	if err != nil {
 		log.Printf("send to %s: %v", chat, err)
+		return ""
 	}
+	return resp.ID
 }
 
 // ---- B15: only stay in groups a whitelisted member added us to and that
@@ -982,9 +989,9 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 			log.Printf("scheduler: job %d: bad chat", j.ID)
 			continue
 		}
-		b.send(ctx, chat, j.Text, nil)
+		sentID := b.send(ctx, chat, j.Text, nil)
 		log.Printf("scheduler: sent job %d", j.ID)
-		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: j.Text}); err != nil {
+		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: j.Text, ID: sentID}); err != nil {
 			log.Printf("scheduler: store: %v", err)
 		}
 	}
@@ -1439,4 +1446,30 @@ func (b *bot) groupMembers(ctx context.Context, chat types.JID) ([]string, map[s
 	b.members[chat.String()] = memberCache{at: time.Now(), keys: keys, members: members}
 	b.membersMu.Unlock()
 	return keys, members
+}
+
+// onReaction records an emoji reaction on the message it targets (L6). It
+// never triggers a reply. Only messages still in the chat's window count,
+// and in DMs only owners' reactions (others get no conversation anyway).
+func (b *bot) onReaction(ctx context.Context, e *events.Message, rm *waE2E.ReactionMessage) {
+	if e.Info.IsFromMe {
+		return
+	}
+	chat := e.Info.Chat
+	lid, pn := b.identify(ctx, e.Info.Sender, e.Info.SenderAlt)
+	if chat.Server != types.GroupServer && !b.allowed(lid, pn) {
+		return
+	}
+	key := personKey(lid, pn)
+	name := e.Info.PushName
+	if n, _ := b.db.PersonName(ctx, key); n != "" {
+		name = n
+	}
+	ok, err := b.db.SetReaction(ctx, chat.String(), rm.GetKey().GetID(), key, name, rm.GetText(), e.Info.Timestamp)
+	switch {
+	case err != nil:
+		log.Printf("reaction in %s: %v", chat, err)
+	case ok:
+		log.Printf("reaction in %s by %s: %q", chat, key, rm.GetText())
+	}
 }
