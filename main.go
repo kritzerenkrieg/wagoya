@@ -508,7 +508,8 @@ func (b *bot) onMessage(e *events.Message) {
 		log.Printf("reminders: %v", err)
 	} else {
 		for _, j := range jobs {
-			reminders = append(reminders, router.Reminder{At: j.NextAt, Text: j.Text, Repeat: j.Repeat})
+			_, text, _ := router.ExpandMentions(j.Text, b.nameOf(ctx))
+			reminders = append(reminders, router.Reminder{At: j.NextAt, Text: text, Repeat: j.Repeat})
 		}
 	}
 	mems, err := b.db.SearchMemories(ctx, chatKey, prompt, b.cfg.MemoryResults)
@@ -548,7 +549,11 @@ func (b *bot) onMessage(e *events.Message) {
 
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
 	// J3: memory is written with checked tools; tags only in CLI mode.
-	turn := &memtools.Turn{DB: b.db, Chat: chatKey, Handles: handles, Requester: line, Spoke: map[string]bool{line.Handle: true},
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
+	}
+	turn := &memtools.Turn{DB: b.db, Chat: chatKey, Handles: handles, Names: names, Requester: line, Spoke: map[string]bool{line.Handle: true},
 		// J10: groups without an owner are left (E1), so every group has one.
 		ChatHasOwner: isGroup || wl, ResolveChat: b.chatResolver(lid, pn), Vectors: b.vectors, AfterSave: b.kickEmbedder}
 	for _, l := range history {
@@ -595,20 +600,8 @@ func (b *bot) onMessage(e *events.Message) {
 		return
 	}
 	// L3: "@P2" becomes a real mention; history keeps "@Name".
-	names := map[string]string{}
-	for _, p := range people {
-		names[p.Handle] = p.Name
-	}
 	out, stored, mentions := router.ResolveMentions(reply, handles, names)
-	jids := make([]string, 0, len(mentions))
-	for _, m := range mentions {
-		server := types.HiddenUserServer
-		if strings.HasPrefix(m.Key, "pn:") {
-			server = types.DefaultUserServer
-		}
-		jids = append(jids, types.NewJID(m.User, server).String())
-	}
-	sentID := b.sendMentions(ctx, chat, out, e, jids)
+	sentID := b.sendMentions(ctx, chat, out, e, mentionJIDs(mentions))
 	reply = stored
 	if err := b.db.AddMessage(ctx, chatKey, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: reply, ID: sentID}); err != nil {
 		log.Printf("store reply: %v", err)
@@ -1021,9 +1014,11 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 			log.Printf("scheduler: job %d: bad chat", j.ID)
 			continue
 		}
-		sentID := b.send(ctx, chat, j.Text, nil)
-		log.Printf("scheduler: sent job %d", j.ID)
-		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: j.Text, ID: sentID}); err != nil {
+		// L10: pinned "@{key}" tags become real mentions now.
+		out, stored, mentions := router.ExpandMentions(j.Text, b.nameOf(ctx))
+		sentID := b.sendMentions(ctx, chat, out, nil, mentionJIDs(mentions))
+		log.Printf("scheduler: sent job %d (%d mentions)", j.ID, len(mentions))
+		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID}); err != nil {
 			log.Printf("scheduler: store: %v", err)
 		}
 	}
@@ -1520,5 +1515,27 @@ func (b *bot) onReaction(ctx context.Context, e *events.Message, rm *waE2E.React
 		log.Printf("reaction in %s: %v", chat, err)
 	case ok:
 		log.Printf("reaction in %s by %s: %q", chat, key, rm.GetText())
+	}
+}
+
+// mentionJIDs are the WhatsApp JIDs of tagged people (L3): LIDs, or phone
+// numbers for "pn:" profiles.
+func mentionJIDs(ms []router.Mention) []string {
+	jids := make([]string, 0, len(ms))
+	for _, m := range ms {
+		server := types.HiddenUserServer
+		if strings.HasPrefix(m.Key, "pn:") {
+			server = types.DefaultUserServer
+		}
+		jids = append(jids, types.NewJID(m.User, server).String())
+	}
+	return jids
+}
+
+// nameOf looks up a person's display name by key, for "@Name" in history.
+func (b *bot) nameOf(ctx context.Context) func(key string) string {
+	return func(key string) string {
+		n, _ := b.db.PersonName(ctx, key)
+		return n
 	}
 }

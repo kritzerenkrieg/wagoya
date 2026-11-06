@@ -127,6 +127,7 @@ flowchart LR
 - [ ] Reactions (L6). Done when: store tests cover set/change/remove/prune, the golden case "reads reactions on messages" passes, and live, a reaction on Rin's message shows up in her next reply's understanding.
 - [ ] Bigger window and argument sides (L7, L8). Done when: the golden case "summary keeps who holds which side" passes, the full golden set still passes with the new prompt rules, and live, after a long group argument Rin states each person's side correctly.
 - [ ] Older chat context on demand (L9). Done when: store tests cover the 72-hour retention (window kept, other chats excluded) and search, the golden case "looks up an older message with chat_history" passes, and live, Rin finds something said earlier the same day that has left the window.
+- [ ] Tags in scheduled messages (L10). Done when: router and memtools tests cover pinning, expanding and listing; the golden case "scheduled reminder keeps its tags" passes (it can't without the change); and live, a scheduled reminder tags people who then get notified.
 
 ## Phase M: Flood control
 

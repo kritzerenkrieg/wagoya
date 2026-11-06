@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
+	"github.com/kritzerenkrieg/wagoya/internal/router"
 	"github.com/kritzerenkrieg/wagoya/internal/store"
 )
 
@@ -81,7 +82,7 @@ func (t *Turn) scheduleTool() llm.Tool {
 	return llm.Tool{
 		Name: "schedule_message",
 		Description: "Schedule a message you will send later: a reminder someone asked for, or your own idea (self_initiated), like nagging them to eat or sleep. " +
-			"Write text as the exact message you will send then, in character. Times are local, like <now>. " +
+			"Write text as the exact message you will send then, in character. Times are local, like <now>. To tag someone, write @P2 as in replies; it stays a real mention when sent. " +
 			"Owners (whitelisted) may repeat it and target another chat they are in; others only get one-off reminders for themselves in this chat. " +
 			"At most 10 pending per chat. Only say it is scheduled if this returned scheduled.",
 		Schema: map[string]any{"type": "object", "required": []string{"text"}, "properties": map[string]any{
@@ -129,6 +130,7 @@ func (t *Turn) schedule(ctx context.Context, text, at string, inMinutes int, rep
 	case !slices.Contains(Repeats, repeat):
 		return "", fmt.Errorf("repeat must be one of %v", Repeats)
 	}
+	text = router.PinMentions(text, t.Handles, t.Names) // L10: tags outlive this prompt's handles
 	var when time.Time
 	switch {
 	case strings.TrimSpace(at) != "":
@@ -220,7 +222,8 @@ func (t *Turn) listTool() llm.Tool {
 				if j.SelfInitiated {
 					who = "your own idea, for " + who
 				}
-				fmt.Fprintf(&b, "job %d | %s | %s | %s | by %s | %s\n", j.ID, j.NextAt.In(t.now().Location()).Format("Mon 2006-01-02 15:04"), rep, where, who, j.Text)
+				_, text, _ := router.ExpandMentions(j.Text, func(k string) string { n, _ := t.DB.PersonName(ctx, k); return n })
+				fmt.Fprintf(&b, "job %d | %s | %s | %s | by %s | %s\n", j.ID, j.NextAt.In(t.now().Location()).Format("Mon 2006-01-02 15:04"), rep, where, who, text)
 			}
 			return b.String()
 		},

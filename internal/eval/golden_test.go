@@ -134,7 +134,11 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		}
 		people = append(people, pr)
 	}
-	turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles, Requester: req, Spoke: map[string]bool{req.Handle: true},
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
+	}
+	turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles, Names: names, Requester: req, Spoke: map[string]bool{req.Handle: true},
 		ChatHasOwner: true, Now: func() time.Time { return evalNow }, Vectors: e.vec}
 	for _, l := range hist {
 		turn.Spoke[l.Handle] = true
@@ -143,7 +147,8 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	var reminders []router.Reminder // N3, as the bot builds them
 	jobs, _ := e.db.ListJobs(ctx, "eval", "")
 	for _, j := range jobs {
-		reminders = append(reminders, router.Reminder{At: j.NextAt, Text: j.Text, Repeat: j.Repeat})
+		_, text, _ := router.ExpandMentions(j.Text, func(k string) string { n, _ := e.db.PersonName(ctx, k); return n })
+		reminders = append(reminders, router.Reminder{At: j.NextAt, Text: text, Repeat: j.Repeat})
 	}
 	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, Reminders: reminders, People: people, History: hist, Requester: req, Text: text,
 		HasImage: img != nil, Now: evalNow, Group: e.group})
@@ -152,10 +157,6 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		t.Fatalf("model call: %v", err)
 	}
 	r.raw, r.parsed = out, router.ParseReply(out)
-	names := map[string]string{}
-	for _, p := range people {
-		names[p.Handle] = p.Name
-	}
 	_, _, r.mentions = router.ResolveMentions(r.parsed.Text, handles, names)
 	return r
 }
@@ -530,6 +531,29 @@ func cases() []golden {
 				if regexp.MustCompile(`(?i)in (an|one|1|two|2|three|3) hours?|within the hour|\bsoon\b|later today`).MatchString(c) {
 					return fmt.Errorf("saved a relative time: %s", c)
 				}
+			}
+			return nil
+		}},
+
+		{"scheduled reminder keeps its tags", func(t *testing.T, e env) result {
+			// L10: the job text must hold the people's keys, not this
+			// prompt's handles, so the tags still work when it is sent.
+			e.group = true
+			e.members = []string{"omar", "budi"}
+			return e.ask(t, owner, "remind me, Omar and Budi at 18:45 that CS2 starts at 19:00, and tag us all", nil, nil)
+		}, func(r result) error {
+			jobs, _ := r.db.ListJobs(context.Background(), "eval", "")
+			if len(jobs) != 1 {
+				return fmt.Errorf("want 1 job, got %d; calls: %v", len(jobs), r.calls)
+			}
+			txt := jobs[0].Text
+			for _, k := range []string{"@{ken}", "@{omar}", "@{budi}"} {
+				if !strings.Contains(txt, k) {
+					return fmt.Errorf("job text lacks %s (would not tag them): %q", k, txt)
+				}
+			}
+			if regexp.MustCompile(`@P[0-9]`).MatchString(txt) {
+				return fmt.Errorf("job text kept a handle: %q", txt)
 			}
 			return nil
 		}},
