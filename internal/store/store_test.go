@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -428,5 +429,50 @@ func TestResetChat(t *testing.T) {
 	s.AddMessage(ctx, "a", router.Line{Time: now, SenderID: "john", SenderName: "John", Text: "fresh"})
 	if got, _ := s.TakeUnread(ctx, "a", 1); len(got) != 1 || got[0].Text != "fresh" {
 		t.Fatalf("curator after reset: %v", got)
+	}
+}
+
+// L6: reactions attach to their message by WhatsApp id, change, go away when
+// removed, ignore unknown messages, and are pruned with their message.
+func TestReactions(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now()
+	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "Rin", FromBot: true, Text: "futsal at 20:00?", ID: "m1"})
+	set := func(id, who, emoji string) bool {
+		ok, err := s.SetReaction(ctx, "g", id, who, strings.ToUpper(who[:1])+who[1:], emoji, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !set("m1", "john", "👍") || !set("m1", "ana", "😂") || !set("m1", "john", "❤️") {
+		t.Fatal("reaction on a stored message not recorded")
+	}
+	if set("nope", "john", "👍") {
+		t.Fatal("reaction on an unknown message recorded")
+	}
+	h, _ := s.History(ctx, "g")
+	byWho := map[string]string{}
+	for _, r := range h[0].Reactions {
+		byWho[r.SenderID] = r.Emoji
+	}
+	if len(h) != 1 || len(h[0].Reactions) != 2 || byWho["john"] != "❤️" || byWho["ana"] != "😂" {
+		t.Fatalf("history: %+v", h)
+	}
+	set("m1", "ana", "")
+	if h, _ := s.History(ctx, "g"); len(h[0].Reactions) != 1 || h[0].Reactions[0].Name != "John" {
+		t.Fatalf("after removal: %+v", h[0].Reactions)
+	}
+	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "a", ID: "m2"})
+	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "b", ID: "m3"}) // m1 pruned
+	var n int
+	s.db.QueryRow(`SELECT count(*) FROM reactions`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d reactions left after their message was pruned", n)
 	}
 }

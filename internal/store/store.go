@@ -121,7 +121,7 @@ func Open(path string, historyLimit int) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + jobsSchema + vectorsSchema); err != nil {
+	if _, err := db.Exec(schema + jobsSchema + vectorsSchema + reactionsSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
@@ -135,6 +135,10 @@ func Open(path string, historyLimit int) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate facts: %w", err)
 	}
+	if err := migrateMessages(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate messages: %w", err)
+	}
 	return &Store{db: db, historyLimit: historyLimit, now: time.Now}, nil
 }
 
@@ -144,21 +148,26 @@ func (s *Store) Close() error { return s.db.Close() }
 // messages (B5, B11).
 func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages(chat, ts, sender_id, sender_name, whitelisted, from_bot, text) VALUES (?,?,?,?,?,?,?)`,
-		chat, l.Time.Unix(), l.SenderID, l.SenderName, l.Whitelisted, l.FromBot, l.Text)
+		`INSERT INTO messages(chat, ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id) VALUES (?,?,?,?,?,?,?,?)`,
+		chat, l.Time.Unix(), l.SenderID, l.SenderName, l.Whitelisted, l.FromBot, l.Text, l.ID)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx,
+	if _, err = s.db.ExecContext(ctx,
 		`DELETE FROM messages WHERE chat = ? AND id NOT IN (SELECT id FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?)`,
-		chat, chat, s.historyLimit)
+		chat, chat, s.historyLimit); err != nil {
+		return err
+	}
+	// L6: reactions go with the messages they were on.
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM reactions WHERE chat = ? AND msg_id NOT IN (SELECT wa_id FROM messages WHERE chat = ?)`, chat, chat)
 	return err
 }
 
 // History returns the stored window for chat, oldest first.
 func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT ts, sender_id, sender_name, whitelisted, from_bot, text FROM
+		`SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM
 		 (SELECT * FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?) ORDER BY id`,
 		chat, s.historyLimit)
 	if err != nil {
@@ -169,13 +178,17 @@ func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error)
 	for rows.Next() {
 		var l router.Line
 		var ts int64
-		if err := rows.Scan(&ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text); err != nil {
+		if err := rows.Scan(&ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text, &l.ID); err != nil {
 			return nil, err
 		}
 		l.Time = time.Unix(ts, 0)
 		out = append(out, l)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return out, s.loadReactions(ctx, chat, out)
 }
 
 // AddMemories stores memories for chat, skipping exact duplicates. They are
@@ -515,6 +528,9 @@ func (s *Store) ResetChat(ctx context.Context, chat string) (int64, error) {
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE chat = ?`, chat)
 	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE chat = ?`, chat); err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chat_summary WHERE chat = ?`, chat); err != nil {

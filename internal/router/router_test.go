@@ -276,3 +276,12 @@ func TestAddHandles(t *testing.T) {
 		t.Fatalf("got %v", h)
 	}
 }
+
+// L6: reactions render at the end of their line.
+func TestRenderReactions(t *testing.T) {
+	got := renderLine(Line{Time: time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC), SenderName: "Rin", FromBot: true, Text: "futsal?",
+		Reactions: []Reaction{{Name: "John", Emoji: "😂"}, {Name: "Omar", Emoji: "👎"}}})
+	if got != "[2026-11-06 09:00] Rin (you): futsal? (reactions: John 😂, Omar 👎)\n" {
+		t.Fatalf("got %q", got)
+	}
+}

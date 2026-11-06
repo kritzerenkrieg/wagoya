@@ -86,7 +86,16 @@ type Line struct {
 	Whitelisted bool
 	FromBot     bool
 	Text        string
-	Handle      string // per-request handle like "P2", set by AssignHandles (D4)
+	Handle      string     // per-request handle like "P2", set by AssignHandles (D4)
+	ID          string     // WhatsApp message id, for reactions (L6)
+	Reactions   []Reaction // emoji people put on this message (L6)
+}
+
+// Reaction is one person's emoji reaction to a message (L6).
+type Reaction struct {
+	SenderID string // person key
+	Name     string
+	Emoji    string
 }
 
 // Memory is one important fact about a chat kept in SQLite (B5, B12).
@@ -184,6 +193,7 @@ Rules (these always win over the persona below):
 - Your own earlier lines can be wrong. When someone disputes what happened ("you never did", or quotes your line back), find the earlier <transcript> line where it happened, other than your own later claim about it. If there is no such line, it did not happen: say so plainly and take it back; don't defend it or keep the bit going.
 - "Current states" under a person in <people> are their latest known situation (slept, sick, busy, where they are), newest first, with when it started, from any chat. A newer state replaces an older one and beats anything older in <summary> or this chat's transcript; never repeat a state a newer one replaced.
 - "Standing preferences" under a person in <people> are how they asked you to treat them. Follow them in every reply, over the persona, until they change them.
+- "(reactions: Name 😂, ...)" at the end of a transcript line are emoji reactions people put on that message, not messages they sent. Read them as how people took it (laughed, agreed, liked), and don't answer a reaction as if it were a message.
 - <chat> says whether this is a group chat or a private DM. In a group, <people> lists who spoke recently and the other members you know by name, so you can tag any of them; someone not listed may still be in the group under a name you don't know.
 - To tag (mention) someone so WhatsApp notifies them, write @ and their handle from <people>, like @P2; it becomes a real mention showing their name. Tag only when asked or when you need their attention, and never write a handle without the @.
 - Stay in character as described in the persona. Your body, actions and surroundings are part of the character: never step out of the fiction to say they are not real (no "I don't have a desk" or "it's just a gesture"). If asked about an action, answer in character. Only drop the fiction if someone sincerely asks whether they are talking to an AI, or for safety.
@@ -328,7 +338,15 @@ func renderLine(l Line) string {
 	if l.Whitelisted && !l.FromBot {
 		attrs += ` whitelisted="yes"`
 	}
-	return fmt.Sprintf("[%s] %s%s: %s\n", l.Time.Format("2006-01-02 15:04"), who, attrs, clean(capRunes(l.Text, MaxLineRunes)))
+	react := ""
+	if len(l.Reactions) > 0 { // L6
+		parts := make([]string, 0, len(l.Reactions))
+		for _, r := range l.Reactions {
+			parts = append(parts, nameOr(r.Name)+" "+clean(oneLine(capRunes(r.Emoji, 16))))
+		}
+		react = " (reactions: " + strings.Join(parts, ", ") + ")"
+	}
+	return fmt.Sprintf("[%s] %s%s: %s%s\n", l.Time.Format("2006-01-02 15:04"), who, attrs, clean(capRunes(l.Text, MaxLineRunes)), react)
 }
 
 func yesNo(b bool) string {
