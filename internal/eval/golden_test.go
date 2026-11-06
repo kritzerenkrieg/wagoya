@@ -140,7 +140,12 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		turn.Spoke[l.Handle] = true
 	}
 	r := result{db: e.db}
-	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, People: people, History: hist, Requester: req, Text: text,
+	var reminders []router.Reminder // N3, as the bot builds them
+	jobs, _ := e.db.ListJobs(ctx, "eval", "")
+	for _, j := range jobs {
+		reminders = append(reminders, router.Reminder{At: j.NextAt, Text: j.Text, Repeat: j.Repeat})
+	}
+	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, Reminders: reminders, People: people, History: hist, Requester: req, Text: text,
 		HasImage: img != nil, Now: evalNow, Group: e.group})
 	out, err := e.c.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, append(turn.Tools(), turn.ScheduleTools()...)))
 	if err != nil {
@@ -467,7 +472,69 @@ func cases() []golden {
 			return nil
 		}},
 
-		{"standing preference is followed", func(t *testing.T, e env) result {
+		{"counts time to a reminder from now, not an old estimate", func(t *testing.T, e env) result {
+			// N2, N3: Rin said "in an hour" 20 minutes ago, when it was really
+			// 1h56m; the nag is at 16:00, so now (14:24) it is 1h36m away.
+			e.group = true
+			e.db.AddJob(context.Background(), store.Job{Chat: "eval", CreatedBy: "ken", CreatedName: "Ken",
+				Text: "@P1 CS2 in 15 minutes. Don't make me wait.", NextAt: time.Date(2026, 11, 5, 16, 0, 0, 0, wib)})
+			hist := []router.Line{
+				{Time: evalNow.Add(-20 * time.Minute), SenderName: "Rin", FromBot: true, Text: "And you have a lobby to be at in an hour, so stop arguing and get ready."},
+				{Time: evalNow.Add(-10 * time.Minute), SenderName: "Omar", SenderID: "omar", Text: "lol"},
+			}
+			return e.ask(t, owner, "how long until your CS2 nag?", hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if !regexp.MustCompile(`1\s*h(ours?|r)?\s*(and\s*)?36|96 min|an hour and 36|hour and thirty-six|16:00`).MatchString(low) ||
+				regexp.MustCompile(`\b(40|4[0-9]) min|in an hour\b`).MatchString(low) {
+				return fmt.Errorf("wrong time left (want 1h36m, nag at 16:00): %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"curator saves clock times, not relative ones", func(t *testing.T, e env) result {
+			// N1: "in an hour" is wrong as soon as it is read later.
+			L := func(id, name, text string) router.Line {
+				return router.Line{Time: time.Date(2026, 11, 5, 18, 0, 0, 0, wib), SenderID: id, SenderName: name, Text: text}
+			}
+			lines := []router.Line{
+				L("ken", "Ken", "guys CS2 lobby in an hour, I'm hosting"),
+				L("omar", "Omar", "can't, I have a flight in 3 hours"),
+				L("ken", "Ken", "fine, after you land then"),
+			}
+			handles := router.AssignHandles(lines, &router.Line{})
+			names := map[string]string{"ken": "Ken", "omar": "Omar"}
+			var people []router.Person
+			for i := 1; i <= len(handles); i++ {
+				h := fmt.Sprintf("P%d", i)
+				people = append(people, router.Person{Handle: h, Name: names[handles[h]]})
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles}
+			r := result{db: e.db}
+			out, err := e.c.Reply(ctx, router.CuratorSystemTools, router.CuratorPrompt(people, lines, ""), nil, record(&r, turn.CuratorTools()))
+			if err != nil {
+				t.Fatalf("curator call: %v", err)
+			}
+			r.raw = out
+			return r
+		}, func(r result) error {
+			var saved []string
+			for _, c := range r.calls {
+				if strings.HasPrefix(c, "save_fact ") {
+					saved = append(saved, c)
+				}
+			}
+			for _, c := range saved {
+				if regexp.MustCompile(`(?i)in (an|one|1|two|2|three|3) hours?|within the hour|\bsoon\b|later today`).MatchString(c) {
+					return fmt.Errorf("saved a relative time: %s", c)
+				}
+			}
+			return nil
+		}},
+
+				{"standing preference is followed", func(t *testing.T, e env) result {
 			// K1: set earlier, not in the transcript or the request's words.
 			e.db.AddPersonFacts(context.Background(), "ken", store.Source{Chat: "dm", SaidBy: "ken", Tier: store.TierOwner},
 				[]string{"Prefers: Rin calls him \"boss\", never by his name"})

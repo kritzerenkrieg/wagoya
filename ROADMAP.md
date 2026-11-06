@@ -137,6 +137,13 @@ flowchart LR
 - [ ] `/mute` and `/unmute` (M2). Done when: command and store tests cover mute, timed mute, unmute and listing; and live, a muted member's @mentions get no reply and don't appear in Rin's transcript.
 - [ ] Daily spend cap (M3). Done when: store tests cover spend per day, and live, the cost log shows a running daily total.
 
+## Phase N: Time precision
+
+**Goal:** Rin's "in X minutes" matches the clock.
+**Exit:** times to reminders come from the server, and no fact stores a relative time.
+
+- [ ] Clock times in facts, fresh durations, reminders in the prompt (N1, N2, N3). Done when: the router test renders `<reminders>` with the right time left; the golden cases "counts time to a reminder from now, not an old estimate" and "curator saves clock times, not relative ones" pass (both also passed without the change, so they guard against regressions rather than prove it); and live, Rin gives the right time to a reminder after an earlier wrong estimate is in the transcript.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**
