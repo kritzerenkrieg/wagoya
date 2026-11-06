@@ -18,3 +18,25 @@ func reportPromptTokens(ctx context.Context, n int) {
 		f(n)
 	}
 }
+
+// Stats is what one request cost (L4): filled in by clients that know, read
+// by the caller after Reply returns. Not safe for concurrent requests.
+type Stats struct {
+	Cost         float64 // USD as reported by the provider
+	Rounds       int     // model calls, including tool rounds
+	PromptTokens int     // summed over rounds
+	OutputTokens int
+	WebSearches  int // server-side web search calls
+}
+
+type statsKey struct{}
+
+// WithStats returns a context whose request adds its usage to s.
+func WithStats(ctx context.Context, s *Stats) context.Context {
+	return context.WithValue(ctx, statsKey{}, s)
+}
+
+func statsFrom(ctx context.Context) *Stats {
+	s, _ := ctx.Value(statsKey{}).(*Stats)
+	return s
+}

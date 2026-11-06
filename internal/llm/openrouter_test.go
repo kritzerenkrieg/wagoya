@@ -153,3 +153,28 @@ func TestOpenRouterRetriesTextToolCall(t *testing.T) {
 		t.Fatalf("retry request: %s", second)
 	}
 }
+
+// L4: a request's stats sum cost and tokens over its rounds and count web searches.
+func TestOpenRouterStats(t *testing.T) {
+	round := func(calls []any, content string, cost float64) func(http.ResponseWriter, map[string]any) {
+		return func(w http.ResponseWriter, _ map[string]any) {
+			json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{
+				"message": map[string]any{"role": "assistant", "content": content, "tool_calls": calls}}},
+				"usage": map[string]any{"cost": cost, "prompt_tokens": 1000, "completion_tokens": 50}})
+		}
+	}
+	calls := []any{
+		map[string]any{"id": "w", "type": "function", "function": map[string]any{"name": "openrouter:web_search", "arguments": `{}`}},
+		map[string]any{"id": "c1", "type": "function", "function": map[string]any{"name": "search_facts", "arguments": `{"query":"x"}`}},
+	}
+	c, _ := fakeOR(t, round(calls, "", 0.002), round(nil, "hi", 0.0005))
+	var st Stats
+	out, err := c.Reply(WithStats(context.Background(), &st), "sys", "news", nil,
+		[]Tool{FactSearchTool(func(context.Context, string, string, bool) string { return "ok" })})
+	if err != nil || out != "hi" {
+		t.Fatalf("out %q err %v", out, err)
+	}
+	if st.Rounds != 2 || st.PromptTokens != 2000 || st.OutputTokens != 100 || st.WebSearches != 1 || st.Cost < 0.00249 || st.Cost > 0.00251 {
+		t.Fatalf("stats %+v", st)
+	}
+}

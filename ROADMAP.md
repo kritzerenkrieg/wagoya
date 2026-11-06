@@ -121,6 +121,8 @@ flowchart LR
 **Exit:** an owner's `/key` makes `http_request` use the key at once, and `/reset` gives a chat a fresh start, with neither message stored.
 
 - [ ] Owner commands `/key` and `/reset` (L1, L2). Done when: unit tests cover parsing, key save/list/remove without echoing the secret, and reset keeping facts and memories; then, live, `/key` in a DM lets Rin read the owner's task board and `/reset` empties the chat context.
+- [ ] Tagging people (L3). Done when: "@P2" in a reply becomes a WhatsApp mention and history stores "@Name" (router tests), the golden case "tags someone with a real mention" passes, and live, Rin tags someone in a group and they get notified.
+- [ ] Cost log per reply (L4). Done when: the stats test passes, and live, `journalctl` shows a cost line for each reply.
 
 ## Cycle: feature and maintenance
 

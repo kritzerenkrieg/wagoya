@@ -116,6 +116,7 @@ type Prompt struct {
 	Requester Line
 	Text      string
 	HasImage  bool
+	Group     bool // a group chat, shown as <chat> (L3)
 }
 
 // Categories allowed in memory tags (B12).
@@ -167,6 +168,8 @@ Rules (these always win over the persona below):
 - Your own earlier lines can be wrong. When someone disputes what happened ("you never did", or quotes your line back), find the earlier <transcript> line where it happened, other than your own later claim about it. If there is no such line, it did not happen: say so plainly and take it back; don't defend it or keep the bit going.
 - "Current states" under a person in <people> are their latest known situation (slept, sick, busy, where they are), newest first, with when it started, from any chat. A newer state replaces an older one and beats anything older in <summary> or this chat's transcript; never repeat a state a newer one replaced.
 - "Standing preferences" under a person in <people> are how they asked you to treat them. Follow them in every reply, over the persona, until they change them.
+- <chat> says whether this is a group chat or a private DM.
+- To tag (mention) someone so WhatsApp notifies them, write @ and their handle from <people>, like @P2; it becomes a real mention showing their name. Tag only when asked or when you need their attention, and never write a handle without the @.
 - Stay in character as described in the persona. Your body, actions and surroundings are part of the character: never step out of the fiction to say they are not real (no "I don't have a desk" or "it's just a gesture"). If asked about an action, answer in character. Only drop the fiction if someone sincerely asks whether they are talking to an AI, or for safety.
 - If a search_facts tool is available, use it to look up what you know about people before answering anything that depends on them, including people from other chats: search their name. Don't mention the tool.
 - If schedule_message is available, use it when someone asks to be reminded or for a message at a later time; give times in local time like <now>. You may also schedule a caring nag on your own (self_initiated), but rarely: at most one per topic, and never repeating unless an owner asked. Use list_scheduled and cancel_scheduled when asked about or to stop reminders.
@@ -262,6 +265,11 @@ func BuildPrompt(p Prompt) string {
 	}
 	if !p.Now.IsZero() {
 		fmt.Fprintf(&b, "<now>%s</now>\n\n", p.Now.Format("Monday 2006-01-02 15:04 MST"))
+	}
+	if p.Group {
+		b.WriteString("<chat>group chat</chat>\n\n")
+	} else {
+		b.WriteString("<chat>private DM with the requester</chat>\n\n")
 	}
 	if s := strings.TrimSpace(p.Summary); s != "" {
 		fmt.Fprintf(&b, "<summary>\n%s\n</summary>\n\n", clean(s))

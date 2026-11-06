@@ -13,7 +13,9 @@ import (
 // echoes the secret.
 func TestKeyCommand(t *testing.T) {
 	b := &bot{keysPath: filepath.Join(t.TempDir(), "api_keys.json"),
-		newHTTPTool: func(k tools.Keys) llm.Tool { return llm.Tool{Name: "http_request", Description: strings.Join(k.Hosts(), ",")} }}
+		newHTTPTool: func(k tools.Keys) llm.Tool {
+			return llm.Tool{Name: "http_request", Description: strings.Join(k.Hosts(), ",")}
+		}}
 	const tok = "tok-secret-123456"
 	steps := []struct{ args, want string }{
 		{"", "No stored keys"},
