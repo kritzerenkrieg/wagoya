@@ -93,7 +93,7 @@ Each triggered request runs in its own goroutine, serialised per chat.
 | SQLite | `modernc.org/sqlite` (pure Go, FTS5) | C4 |
 | LLM | `anthropic-sdk-go/v2` or `claude` CLI, `claude-haiku-5-5` (default), effort low | A5, B6 |
 | Process manager | systemd (`deploy/wagoya.service`) | C1 |
-| Deploy | `deploy/deploy.sh`: cross-compile, scp | C2 |
+| Deploy | `deploy/deploy.sh`: cross-compile, resumable rsync, checked restart | C2 |
 
 ## H. Quality targets
 

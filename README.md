@@ -83,7 +83,7 @@ Build for a Linux server:
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o wagoya .
 ```
 
-`deploy/` has a systemd unit and a deploy script (cross-compile, scp, restart).
+`deploy/` has a systemd unit and a deploy script (cross-compile, resumable rsync upload with a checksum check, restart until connected).
 
 ## Configuration
 

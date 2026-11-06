@@ -58,7 +58,7 @@ A phase starts only when its rows are Decided.
 | B17 | Context token cap | Decided | Each request's input (system prompt, memories, transcript, request, image) is capped at 128k tokens (`CONTEXT_TOKENS`). Over the cap: drop the oldest transcript lines, then the lowest-ranked memories, then truncate the request text. Tokens are overestimated locally (1 token per 3 bytes, 5k per image) instead of an API count, to save latency and work in CLI mode. User request. |
 | B18 | Outgoing message pacing | Decided | All outgoing messages, across every chat, are spaced at least 3 s apart (`SEND_INTERVAL`). Overflow queues in arrival order instead of being dropped. Reduces ban risk (A2). User request. |
 | C1 | Process manager | Decided | systemd unit. User choice. |
-| C2 | Deploy method | Decided | Build the Go binary on the laptop (cross-compile) and copy it to the VPS. User choice. |
+| C2 | Deploy method | Decided | Build the Go binary on the laptop (cross-compile) and copy it to the VPS. User choice. The copy is a resumable `rsync` with retries and a checksum check, since the upload often stalls (agreed by the user, 2026-11-06). |
 | C3 | Secrets on VPS | Decided | A `.env` file with `chmod 600`, never committed. `data/` (WhatsApp session and SQLite) is secret too. User agreed. |
 | C4 | VPS target | Decided | Found at first deploy: host `kritz` is Ubuntu 22.04, x86_64. Built as `GOARCH=amd64 CGO_ENABLED=0` with pure-Go SQLite (`modernc.org/sqlite`). User delegated ("find out when deploying"). |
 | D1 | Persona | Decided | The bot has one global persona (name, character, style), stored in its own SQLite table with full history. The fixed rules (B8, chat-is-data, WhatsApp formatting) always outrank the persona. User request; global by user choice. |
