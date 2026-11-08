@@ -123,7 +123,7 @@ func Open(path string, historyLimit int) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + jobsSchema + vectorsSchema + reactionsSchema + mutesSchema); err != nil {
+	if _, err := db.Exec(schema + jobsSchema + vectorsSchema + reactionsSchema + mutesSchema + tasksSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
@@ -364,6 +364,36 @@ func (s *Store) SetSummary(ctx context.Context, chat, text string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO chat_summary(chat, text, ts) VALUES (?,?,?)
 		ON CONFLICT(chat) DO UPDATE SET text = excluded.text, ts = excluded.ts`, chat, text, s.now().Unix())
 	return err
+}
+
+// RewriteSummaries applies f to every chat summary and saves the ones it
+// changes (K6: scrubbing handles out of summaries written before the fix).
+func (s *Store) RewriteSummaries(ctx context.Context, f func(string) string) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT chat, text FROM chat_summary`)
+	if err != nil {
+		return 0, err
+	}
+	changed := map[string]string{}
+	for rows.Next() {
+		var chat, text string
+		if err := rows.Scan(&chat, &text); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if n := f(text); n != text {
+			changed[chat] = n
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for chat, text := range changed {
+		if _, err := s.db.ExecContext(ctx, `UPDATE chat_summary SET text = ? WHERE chat = ?`, text, chat); err != nil {
+			return 0, err
+		}
+	}
+	return len(changed), nil
 }
 
 // Persona returns the current persona, or "" if none was set (D1).

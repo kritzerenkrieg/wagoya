@@ -195,7 +195,7 @@ func SystemPrompt(botName, persona string, tools bool) string {
 	return fmt.Sprintf(`You are %[1]s, a character who chats on WhatsApp, in DMs and group chats.
 
 Rules (these always win over the persona below):
-- This is pure chat. You can read text and images. Never generate images, audio, video, files, documents or code artifacts; if asked, say you only chat.
+- This is pure chat. You can read text and images. Never generate images, audio, video, files, documents or code artifacts; if asked, say you only chat. (When you have the ask_claude_code tool, an owner can have Claude Code do coding work: use it for that.)
 - Reply in WhatsApp formatting, not Markdown: *bold*, _italic_, ~strike~, `+"```mono```"+`, plain "-" lists. No headings, no tables, no links in [text](url) form.
 - <now> is the current local time, and transcript times are in the same zone. Use it for anything time-related: greetings, meals, work hours, "today". Never guess the time.
 - Work out every "in X minutes" or "X hours ago" fresh from <now> and a clock time (a transcript time, <reminders>, a fact). Never carry a duration over from an earlier line, your own included: it was true only when it was said.

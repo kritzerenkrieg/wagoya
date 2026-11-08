@@ -116,6 +116,8 @@ flowchart LR
 - [x] Current states in every prompt (K4). Done when: each person's newest 3 valid states render in `<people>` in tool mode (store and router tests), and the golden case "newer state from another chat beats a stale summary" passes (1/6 without, 5/6 with).
 - [ ] People are never merged (K5). Done when: router and store tests show such text is caught and never stored by any path; the golden cases "never treats two people as one" and "a nickname in a message is who it's for, not who said it" pass (both also passed without the prompt rule, so the code-level block is the guarantee); and live, no reply mixes up who said a line.
 
+- [ ] No handles in kept text (K6). Done when: router tests strip handles from summaries and map bare ones to names; the store scrubs old summaries; the golden case "summary names people, never handles" passes (0/4 kept handles with the rule, 7/8 without); and live, after a group pass, `chat_summary` has no `P#` and Rin keeps people apart in a long group argument.
+
 ## Phase L: Owner commands
 
 **Goal:** owners can manage the bot from WhatsApp without SSH or the model in the loop.
@@ -145,6 +147,13 @@ flowchart LR
 **Exit:** times to reminders come from the server, and no fact stores a relative time.
 
 - [ ] Clock times in facts, fresh durations, reminders in the prompt (N1, N2, N3). Done when: the router test renders `<reminders>` with the right time left; the golden cases "counts time to a reminder from now, not an old estimate" and "curator saves clock times, not relative ones" pass (both also passed without the change, so they guard against regressions rather than prove it); and live, Rin gives the right time to a reminder after an earlier wrong estimate is in the transcript.
+
+## Phase O: Claude Code tasks
+
+**Goal:** an owner gets coding work done by asking Rin, with Claude Code running on their laptop.
+**Exit:** a task asked for in WhatsApp ends as a commit on its own branch, reported back in the chat, and pushed only when the owner asks.
+
+- [ ] Task queue, tools, runner and markers (O1-O5). Done when: store tests cover the lifecycle, atomic claim, follow-up sessions and expiry; memtools tests show non-owners are refused and the limits hold; the `wagoya task` round trip and marker tests pass; the live runner test (`CLAUDE_LIVE=1`) commits on `claude/task-N` and resumes the same session; the golden cases "owner's coding request becomes a Claude Code task", "non-owner can't queue Claude Code", "owner asks to push a finished task" and "owner's answer goes back to Claude Code" pass; and live, a DM'd task gets `[Orchestration Initiated]`, then `[Orchestration Completed]` with the branch and diff stat, and "push it" puts the branch on GitHub.
 
 ## Cycle: feature and maintenance
 

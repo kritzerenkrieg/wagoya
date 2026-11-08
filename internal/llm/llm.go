@@ -308,22 +308,50 @@ func (c *cliClient) Reply(ctx context.Context, system, prompt string, img *Image
 		return "", fmt.Errorf("claude cli: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 
-	// The last {"type":"result"} event holds the final text.
+	r, ok := ParseCLIResult(out)
+	switch {
+	case !ok:
+		return "", fmt.Errorf("claude cli: no result event: %s", strings.TrimSpace(stderr.String()))
+	case r.IsError:
+		return "", fmt.Errorf("claude cli error: %s", r.Result)
+	}
+	return r.Result, nil
+}
+
+// CLIResult is the {"type":"result"} event that ends a Claude Code
+// stream-json run.
+type CLIResult struct {
+	SessionID         string             `json:"session_id"`
+	IsError           bool               `json:"is_error"`
+	Subtype           string             `json:"subtype"`
+	Result            string             `json:"result"`
+	CostUSD           float64            `json:"total_cost_usd"`
+	PermissionDenials []PermissionDenial `json:"permission_denials"`
+}
+
+// PermissionDenial is a tool call Claude Code refused to run.
+type PermissionDenial struct {
+	ToolName  string          `json:"tool_name"`
+	ToolInput json.RawMessage `json:"tool_input"`
+}
+
+// ParseCLIResult finds the last result event in stream-json output.
+func ParseCLIResult(out []byte) (CLIResult, bool) {
+	var r CLIResult
+	found := false
 	for _, l := range strings.Split(string(out), "\n") {
 		var ev struct {
-			Type    string `json:"type"`
-			IsError bool   `json:"is_error"`
-			Result  string `json:"result"`
+			Type string `json:"type"`
 		}
 		if json.Unmarshal([]byte(l), &ev) != nil || ev.Type != "result" {
 			continue
 		}
-		if ev.IsError {
-			return "", fmt.Errorf("claude cli error: %s", ev.Result)
+		var cur CLIResult
+		if json.Unmarshal([]byte(l), &cur) == nil {
+			r, found = cur, true
 		}
-		return ev.Result, nil
 	}
-	return "", fmt.Errorf("claude cli: no result event: %s", strings.TrimSpace(stderr.String()))
+	return r, found
 }
 
 // webTools picks the server web tool versions (E1). The dynamic-filtering

@@ -58,3 +58,21 @@ func TestSummaryInPrompt(t *testing.T) {
 		t.Fatal("empty summary rendered")
 	}
 }
+
+func TestStripHandles(t *testing.T) {
+	names := map[string]string{"P1": "John", "P2": "Budi"}
+	for _, c := range []struct{ in, want string }{
+		{"Chat is mostly John (P1) with Rin.", "Chat is mostly John with Rin."},
+		{"John (John, P1), Omar (P2, owner of a bot; listed as MOD), Ana (P3) and Rin.", "John (John), Omar (owner of a bot; listed as MOD), Ana and Rin."},
+		{"P2 said the match is at 19:00, @P1 agreed.", "Budi said the match is at 19:00, John agreed."},
+		{"P9 joined late.", "someone joined late."},
+		{"No handles here, P2P networking and MP3s.", "No handles here, P2P networking and MP3s."},
+	} {
+		if got := StripHandles(c.in, names); got != c.want {
+			t.Errorf("StripHandles(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if got := ParseSummaryFor("<summary>Budi (P2) backs Messi; P1 backs Ronaldo.</summary>", names); got != "Budi backs Messi; John backs Ronaldo." {
+		t.Errorf("ParseSummaryFor = %q", got)
+	}
+}

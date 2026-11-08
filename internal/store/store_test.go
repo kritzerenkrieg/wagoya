@@ -599,3 +599,18 @@ func TestIdentityMergesNotStored(t *testing.T) {
 		t.Fatalf("memories: %+v", m)
 	}
 }
+
+func TestRewriteSummaries(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	s.SetSummary(ctx, "a", "John (P1) and Budi.")
+	s.SetSummary(ctx, "b", "Nothing to fix.")
+	n, err := s.RewriteSummaries(ctx, func(t string) string { return strings.ReplaceAll(t, " (P1)", "") })
+	if got, _ := s.Summary(ctx, "a"); err != nil || n != 1 || got != "John and Budi." {
+		t.Fatalf("rewrite = %d %v %q", n, err, got)
+	}
+}

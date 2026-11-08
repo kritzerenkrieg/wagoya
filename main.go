@@ -79,6 +79,13 @@ type bot struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "task" { // O2: the laptop runner, over SSH
+		if err := taskCommand(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "task:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := config.LoadDotEnv(".env"); err != nil {
 		log.Fatalf("read .env: %v", err)
 	}
@@ -101,6 +108,12 @@ func main() {
 		log.Fatalf("open bot db: %v", err)
 	}
 	defer db.Close()
+	// K6: summaries written before the fix may hold per-prompt handles.
+	if n, err := db.RewriteSummaries(ctx, func(t string) string { return router.StripHandles(t, nil) }); err != nil {
+		log.Printf("scrub summaries: %v", err)
+	} else if n > 0 {
+		log.Printf("scrubbed handles from %d chat summaries", n)
+	}
 
 	claude := newClient(cfg, cfg.WebTools, true)
 	curator := newClient(cfg, false, false) // H1: background passes never use the web
@@ -223,7 +236,7 @@ func (b *bot) onEvent(evt any) {
 			b.resolveWhitelist()
 			b.auditGroups()
 			b.guessMerges()
-			b.schedOnce.Do(func() { go b.runScheduler() })
+			b.schedOnce.Do(func() { go b.runScheduler(); go b.runTasks() })
 		}()
 	case *events.JoinedGroup:
 		go b.onJoined(e)
@@ -566,8 +579,9 @@ func (b *bot) onMessage(e *events.Message) {
 	case b.http != nil:
 		toolset = append(toolset, *b.http)
 	}
-	if line.Whitelisted { // I2: MCP tools are owner-only
+	if line.Whitelisted { // I2: MCP tools are owner-only; O1: so is Claude Code
 		toolset = append(toolset, b.mcp...)
+		toolset = append(toolset, turn.ClaudeTools()...)
 	}
 	// J5: tool definitions count in the fixed part; the ratio is learned
 	// from what each text-only reply's first round really cost.
@@ -596,6 +610,12 @@ func (b *bot) onMessage(e *events.Message) {
 	parsed := router.ParseReply(reply)
 	b.applyTags(ctx, chatKey, line, handles, parsed, !b.claude.SupportsTools())
 	reply = parsed.Text
+	if turn.Queued() { // O5: the marker is the server's, never left to the model
+		if reply == "" {
+			reply = "On it."
+		}
+		reply = memtools.WithMarker(memtools.MarkInitiated, reply)
+	}
 	if reply == "" {
 		return
 	}
@@ -1226,7 +1246,11 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		saved = b.curateTags(ctx, chat, handles, router.ParseCurator(out))
 	}
 	// J8: the same pass rewrites the chat's rolling summary.
-	summary := router.ParseSummary(out)
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
+	}
+	summary := router.ParseSummaryFor(out, names) // K6: no per-prompt handles kept
 	if summary != "" {
 		if err := b.db.SetSummary(ctx, chat, summary); err != nil {
 			log.Printf("curator: save summary: %v", err)

@@ -40,7 +40,8 @@ type Turn struct {
 	ResolveChat  func(ctx context.Context, name string) (chat, label string, err error) // owners: another chat by name, or "dm"
 	Now          func() time.Time                                                       // clock; nil means time.Now
 
-	saved atomic.Int32
+	saved  atomic.Int32
+	queued atomic.Int32 // Claude Code work queued (O5)
 }
 
 // Saved is how many facts and memories this turn saved.
@@ -367,6 +368,7 @@ func (t *Turn) saveMemoryTool() llm.Tool {
 				return "error: invalid input: " + err.Error()
 			}
 			cat, text := strings.ToLower(strings.TrimSpace(in.Category)), strings.Join(strings.Fields(in.Content), " ")
+			text = router.StripHandles(text, t.Names) // K6: handles change every prompt
 			switch {
 			case !slices.Contains(router.Categories, cat):
 				return fmt.Sprintf("error: category must be one of %v", router.Categories)

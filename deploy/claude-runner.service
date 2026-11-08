@@ -1,0 +1,18 @@
+# Laptop only (O2): a systemd user unit for the Claude Code task runner.
+#   go build -o ~/.local/bin/claude-runner ./cmd/claude-runner
+#   cp deploy/claude-runner.service ~/.config/systemd/user/
+#   systemctl --user enable --now claude-runner
+[Unit]
+Description=wagoya Claude Code task runner
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/claude-runner
+Environment=PATH=%h/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+# The SSH key to kritz has a passphrase: use the desktop keyring agent (unlocked at login).
+Environment=SSH_AUTH_SOCK=%t/gcr/ssh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

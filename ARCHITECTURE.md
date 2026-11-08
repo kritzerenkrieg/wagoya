@@ -43,6 +43,7 @@ A WhatsApp number backed by Claude that the user can DM and add to groups (A1).
 | Rate limits | `internal/ratelimit` | Global 3 s message pacing with queue (B18); per-chat denial cooldown (B14) | in-memory |
 | LLM | `internal/llm` | One stateless request, text + optional image (B6, B8); refusals passed through (B13) | `data/claude-work/` (CLI cwd) |
 | Config | `internal/config` | `.env` loading and validation | — |
+| Claude Code tasks | `claudetasks.go`, `internal/memtools/claude.go`, `cmd/claude-runner` | Owner-only task queue (O1); `wagoya task claim/status/done` for the laptop runner over SSH (O2); announcing results with the fixed markers (O5). The runner runs Claude Code in a worktree on `claude/task-N` and pushes only that branch on request (O3) | `data/bot.db` `claude_tasks`; laptop worktrees |
 
 Each triggered request runs in its own goroutine, serialised per chat.
 
@@ -56,6 +57,12 @@ Each triggered request runs in its own goroutine, serialised per chat.
 3. Assign handles P1..Pn (requester is P1). API mode: show each person's fact count and give the model a `search_facts` tool (FTS5 over every known person, by handle, name or fact text); CLI mode: put all their facts inline (D7). Build the prompt: `<people>`, `<memories>`, `<transcript>`, `<request>`; whitelisted senders are marked by LID/number, not name. The system prompt carries the current persona.
 4. Call Claude. With an API provider, memory is written through the tools in `internal/memtools` (J3): `save_fact(subject, content, kind, source)`, `invalidate_fact(id, reason)` and `save_memory(category, content)`. They validate input, return errors to the model, and set the tier from who asked and the declared source (an owner's request is owner, a person about themselves is self, a claimed self statement must come from someone who spoke in the prompt, the curator is always inferred). Retracting needs an owner or the fact's own subject. Stray memory tags are stripped and ignored; `<persona>` stays a tag. In CLI mode (no custom tools), strip hidden tags and apply them: `<memory>` → chat memories, `<person id>` or `<person name>` → that person's global profile (any known person, or a new name-only profile), `<forget id>` → invalidates the fact (kept as history) if the requester is whitelisted or it is their own fact, `<persona>` → only if the requester is whitelisted (B12, D2, D4, J1). Saved facts carry who said them and a source tier: owner, self, participant, inferred (curator) or legacy (J4).
 5. Send the reply quoting the trigger; store the reply in the window.
+
+**Claude Code task** (owners only, O1-O5)
+1. An owner asks Rin; she calls `ask_claude_code`. The task is stored with the owner's own message; the reply gets `[Orchestration Initiated]` from the server.
+2. The laptop runner claims it over SSH, makes a worktree on `claude/task-N`, runs `claude -p` with restricted tools, heartbeats every 30 s (a cancel stops it), and reports the result, commits and diff stat.
+3. Every 15 s the bot expires stale tasks and announces new statuses: one curator-model call writes Rin's message (template fallback), the server adds `[Orchestration Completed]` or `[Orchestration Question]` and tags the owner in groups.
+4. An answer or follow-up resumes the same Claude Code session; `push_claude_branch` queues a push of that branch only.
 
 **DM**: whitelisted → same as a triggered message, no prefix needed (B4). Otherwise → fixed denial text, nothing stored (B7, B14).
 
@@ -73,7 +80,8 @@ Each triggered request runs in its own goroutine, serialised per chat.
 | Chat summary | `data/bot.db` `chat_summary` | One per chat, at most 300 words, rewritten by each curator pass from the old summary plus the new messages; shown as `<summary>` before the transcript and dropped after history and memories when the prompt is over budget (J8) |
 | Scheduled messages | `data/bot.db` `jobs` | Created with `schedule_message`, listed and cancelled with `list_scheduled` / `cancel_scheduled` (J7). A 30-second loop sends due jobs through the pacer; one-offs are deleted after sending (or dropped if over 12 h late after downtime), recurring ones (hourly, daily, weekdays, weekly) move to their next run and skip missed ones. Limits per J10: owners any chat they are in and repeating; others one-off for themselves in the current chat; the model's own nags only in chats with an owner; 10 pending per chat |
 | Fact vectors | `data/bot.db` `fact_vectors` | One embedding per fact (`EMBED_MODEL`, 512 dims), filled by a background embedder and dropped when a fact is deleted or reworded. `search_facts` unions the embedding hits near the best one with FTS hits (a name in the query ranks that person's facts by the rest of it) and orders them valid first, by tier, then relevance (J2) |
-| Settings | `data/bot.db` `settings` | Small runtime state: the learned bytes per prompt token per model (J5) |
+| Settings | `data/bot.db` `settings` | Small runtime state: the learned bytes per prompt token per model (J5); when the laptop runner last polled and its repos (O2) |
+| Claude Code tasks | `data/bot.db` `claude_tasks` | Permanent record of each task: the owner's words, Rin's task, status, session, branch, question and result (O1). Queued or waiting tasks expire after 24 h; a running one after 5 minutes without a heartbeat |
 
 ## F. Interfaces and contracts
 
@@ -82,6 +90,7 @@ Each triggered request runs in its own goroutine, serialised per chat.
 | Configuration | env file | `.env.example` |
 | Group trigger | chat syntax | `@<bot> <prompt>` mention, or a reply to the bot (B1) |
 | Memory tools | API providers | `search_facts`, `save_fact`, `invalidate_fact`, `save_memory` (J3); `<persona>` stays a tag (D2) |
+| Task queue | SSH subcommand | `wagoya task claim [repos]` → JSON claim or `{}`; `task status <id>` → status (heartbeat); `task done <id>` ← JSON report on stdin (O2) |
 | Hidden tags | CLI mode only | `<memory category="…">`, `<person id="P2">`, `<forget id="P2">`, `<persona>` (B12, D2, D4) |
 
 ## G. Stack
@@ -119,6 +128,7 @@ internal/memtools   memory tools (J3)
 internal/tools      http_request and MCP client (I1-I3)
 internal/ratelimit  message pacing, denial cooldown (tested)
 internal/config     .env loading
+cmd/claude-runner   laptop runner for Claude Code tasks (O2, not deployed)
 deploy/             systemd unit, deploy script
 data/               runtime state (gitignored, secret)
 ```

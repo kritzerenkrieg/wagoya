@@ -47,6 +47,23 @@ wagoya remembers people, not just conversations.
 }}
 ```
 
+### Claude Code tasks
+
+Owners can ask Rin to get coding work done ("have Claude Code add X to wagoya"). Claude Code runs on the owner's laptop with their own login, not on the server:
+
+- **Queue:** Rin's owner-only tools queue a task in `bot.db`, with the owner's own words. Her reply starts with `[Orchestration Initiated]`.
+- **Runner:** `cmd/claude-runner` on the laptop polls the queue over SSH (`wagoya task claim`), runs Claude Code in a git worktree on `claude/task-N`, and reports back. Claude Code may edit files, build, test and commit; anything else is refused and listed.
+- **Results:** Rin posts `[Orchestration Completed]` with what changed, the branch and the diff stat. A question from Claude Code comes as `[Orchestration Question]`; the owner's answer resumes the same session. Follow-ups ("also add a test for #3") continue it too.
+- **Pushing:** only the task's branch, only when an owner asks Rin. Merging and deploying stay manual.
+
+```sh
+go build -o ~/.local/bin/claude-runner ./cmd/claude-runner
+cat > ~/.config/wagoya-runner.json <<'JSON'
+{"host": "kritz", "remote": "~/wagoya/wagoya", "repos": {"wagoya": "/path/to/wa-claude-bot"}}
+JSON
+claude-runner            # or: systemctl --user enable --now claude-runner (deploy/claude-runner.service)
+```
+
 ### Chat behaviour
 
 - **Groups:** anyone can trigger it by **@mentioning** the bot or **replying** to one of its messages. It reads the last N messages as context, including quoted replies and images.
@@ -116,6 +133,7 @@ internal/memtools   memory tools: search_facts, save_fact, invalidate_fact, save
 internal/tools      http_request (public-only) and the MCP client
 internal/ratelimit  global send pacer and per-chat cooldown
 internal/config     .env loading and validation
+cmd/claude-runner   laptop-side runner for Claude Code tasks (never deployed)
 ```
 
 Design notes: [`ARCHITECTURE.md`](ARCHITECTURE.md). Every design choice, with its reason: [`DECISIONS.md`](DECISIONS.md). Plan: [`ROADMAP.md`](ROADMAP.md).
@@ -125,6 +143,8 @@ Design notes: [`ARCHITECTURE.md`](ARCHITECTURE.md). Every design choice, with it
 ```sh
 go test ./...                           # offline
 LLM_LIVE=1 go test ./internal/llm -v    # real model calls (needs keys, costs money)
+EVAL=1 go test ./internal/eval          # golden set against the configured model (the deploy gate)
+CLAUDE_LIVE=1 go test ./cmd/claude-runner -run Live -v   # real Claude Code on a throwaway repo
 ```
 
 ## Data and privacy
