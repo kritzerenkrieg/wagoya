@@ -5,10 +5,11 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=wagoya
-WorkingDirectory=/home/wagoya/wagoya
-ExecStart=/home/wagoya/wagoya/wagoya
-Environment=PATH=/home/wagoya/.local/bin:/usr/local/bin:/usr/bin:/bin
+# deploy.sh fills in the user, app dir and home placeholders on the VPS.
+User=@USER@
+WorkingDirectory=@APP@
+ExecStart=@APP@/wagoya
+Environment=PATH=@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

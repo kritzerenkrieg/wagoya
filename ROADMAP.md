@@ -117,6 +117,7 @@ flowchart LR
 - [ ] People are never merged (K5). Done when: router and store tests show such text is caught and never stored by any path; the golden cases "never treats two people as one" and "a nickname in a message is who it's for, not who said it" pass (both also passed without the prompt rule, so the code-level block is the guarantee); and live, no reply mixes up who said a line.
 
 - [ ] No handles in kept text (K6). Done when: router tests strip handles from summaries and map bare ones to names; the store scrubs old summaries; the golden case "summary names people, never handles" passes (0/4 kept handles with the rule, 7/8 without); and live, after a group pass, `chat_summary` has no `P#` and Rin keeps people apart in a long group argument.
+- [ ] Addressee labels and pronoun point of view (K7, K8). Done when: the router test renders `to="…"` only for known addressees (DM, reply, mention, Rin's own replies); the golden cases "echoes \"my PA\" from its own point of view" and "knows which person its own \"you\" was for" pass (both also passed without the labels, so they are guards); "keeps a nickname for itself on itself" passes (a guard: the real chat slipped 4/24 without the name sentence and 0/16 with, the invented replay 0/16 either way); and live, Rin never flips whose PA or whose debt a line states, or calls the owner by his nickname for her.
 
 ## Phase L: Owner commands
 

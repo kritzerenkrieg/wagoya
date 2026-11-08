@@ -28,19 +28,25 @@ func migrateMessages(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	has := false
+	have := map[string]bool{}
 	for rows.Next() {
 		var n string
 		if err := rows.Scan(&n); err != nil {
 			rows.Close()
 			return err
 		}
-		has = has || n == "wa_id"
+		have[n] = true
 	}
 	rows.Close()
-	if !has {
-		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN wa_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return err
+	for _, c := range [][2]string{
+		{"wa_id", "TEXT NOT NULL DEFAULT ''"},    // L6
+		{"to_bot", "INTEGER NOT NULL DEFAULT 0"}, // K7
+		{"to_names", "TEXT NOT NULL DEFAULT ''"}, // K7: names, one per line
+	} {
+		if !have[c[0]] {
+			if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN ` + c[0] + ` ` + c[1]); err != nil {
+				return err
+			}
 		}
 	}
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS messages_wa_id ON messages(chat, wa_id)`)

@@ -46,7 +46,7 @@ func setup(t *testing.T) (*store.Store, func(req router.Line, spoke ...string) (
 }
 
 var (
-	john  = router.Line{SenderID: "john", SenderName: "John", Whitelisted: true}
+	john = router.Line{SenderID: "john", SenderName: "John", Whitelisted: true}
 	budi = router.Line{SenderID: "budi", SenderName: "Budi"}
 )
 

@@ -60,7 +60,8 @@ func (b *bot) announceTasks() {
 		out, stored, mentions := router.ExpandMentions(text, b.nameOf(ctx))
 		sentID := b.sendMentions(ctx, chat, out, nil, mentionJIDs(mentions))
 		log.Printf("tasks: announced #%d (%s) in %s", t.ID, t.Status, t.Chat)
-		if err := b.db.AddMessage(ctx, t.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID}); err != nil {
+		if err := b.db.AddMessage(ctx, t.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID,
+			To: []string{t.RequesterName}}); err != nil { // K7
 			log.Printf("tasks: store: %v", err)
 		}
 	}

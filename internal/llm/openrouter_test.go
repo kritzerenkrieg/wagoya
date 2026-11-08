@@ -49,13 +49,13 @@ func TestOpenRouterToolLoop(t *testing.T) {
 				"tool_calls": []any{map[string]any{"id": "c1", "type": "function",
 					"function": map[string]any{"name": "search_facts", "arguments": `{"person":"P1","query":"job"}`}}}}}}})
 	}
-	c, reqs := fakeOR(t, call, text("You're a nurse."))
+	c, reqs := fakeOR(t, call, text("You're an nurse."))
 	var got []string
 	out, err := c.Reply(context.Background(), "sys", "what do i do?", nil, []Tool{FactSearchTool(func(_ context.Context, p, q string, _ bool) string {
 		got = append(got, p+"|"+q)
 		return "P1: Job: nurse"
 	})})
-	if err != nil || out != "You're a nurse." {
+	if err != nil || out != "You're an nurse." {
 		t.Fatalf("reply %q, %v", out, err)
 	}
 	if len(got) != 1 || got[0] != "P1|job" {

@@ -477,7 +477,7 @@ func TestReactions(t *testing.T) {
 	for i := 0; i < WindowBlock; i++ {
 		s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "b", ID: fmt.Sprintf("x%d", i)})
 	}
-	s.History(ctx, "g")                                                                                     // the window moves past m1
+	s.History(ctx, "g")                                                                                       // the window moves past m1
 	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "c", ID: "m3"}) // m1 pruned
 	var n int
 	s.db.QueryRow(`SELECT count(*) FROM reactions`).Scan(&n)

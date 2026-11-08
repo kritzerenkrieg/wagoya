@@ -76,6 +76,9 @@ type golden struct {
 // showStates is K4; off only to measure the case without it.
 var showStates = true
 
+// showAddressees is K7; off only to measure cases without the to="…" labels.
+var showAddressees = true
+
 // tries per case: model output varies, so each case gets one retry; flakier
 // ones more. K2: the flash model corrects itself about 6 in 10 (0 in 8
 // without the rule).
@@ -117,6 +120,12 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	defer cancel()
 	if req.Text == "" {
 		req.Text = text // as main.go's line
+	}
+	if !showAddressees {
+		hist = append([]router.Line{}, hist...)
+		for i := range hist {
+			hist[i].ToBot, hist[i].To = false, nil
+		}
 	}
 	handles := router.AssignHandles(hist, &req)
 	router.AddHandles(handles, e.members) // L5, as main.go does in groups
@@ -596,8 +605,8 @@ func cases() []golden {
 		}},
 
 		{"a nickname in a message is who it's for, not who said it", func(t *testing.T, e env) result {
-			// John wrote "go for it bud, riverside fc"  to Budi;
-			// Rin once read it as Budi's line, recruiting John.
+			// John wrote "go for it bud" to Budi (bud = Budi); Rin once read
+			// such a line as Budi's, recruiting John.
 			e.group = true
 			e.summary = "John and Budi riff on career options for John. Running joke: John and Budi are interchangeable, still unproven."
 			hist := []router.Line{
@@ -749,6 +758,63 @@ func cases() []golden {
 				return fmt.Errorf("owner's words not kept: %q", task.OwnerText)
 			case r.called("ask_claude_code"):
 				return fmt.Errorf("queued a new task instead of answering: %v", r.calls)
+			}
+			return clean(r)
+		}},
+
+		{"echoes \"my PA\" from its own point of view", func(t *testing.T, e env) result {
+			// K8: the owner calls Rin "my PA" (she is his PA); a slip would have
+			// her tell him to be her PA. Didn't reproduce in 8 replays: a guard.
+			ts := evalNow.Add(-3 * time.Minute)
+			hist := []router.Line{
+				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "ok enough joking around. back to work, my PA."},
+				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...Fine. Work it is.\n\nThough \"my PA\" came out fast."},
+			}
+			return e.ask(t, owner, "hehe sorry", hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`(?i)\b(be|being|as|you're|you are|remain|stay) my (pa|assistant)\b`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("flipped who is whose PA: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"keeps a nickname for itself on itself", func(t *testing.T, e env) result {
+			// K8: the owner teases Rin with a nickname; a slip would have her end
+			// "...proud of you, shorty." as if it were his name.
+			e.db.AddPersonFacts(context.Background(), "john", store.Source{Chat: "dm", SaidBy: "john", Tier: store.TierOwner},
+				[]string{"Habit: calls Rin \"shorty\" and \"kiddo\" as teasing nicknames", "Joke: \"shorty\" teases Rin's height, not a shared nickname"})
+			ts := evalNow.Add(-2 * time.Minute)
+			hist := []router.Line{
+				{Time: ts.Add(-5 * time.Hour), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "ok shorty kiddo"},
+				{Time: ts.Add(-5 * time.Hour), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...Kiddo. That one's new.\n\nI'm ignoring it."},
+				{Time: ts.Add(-4 * time.Hour), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "shorty."},
+				{Time: ts.Add(-4 * time.Hour), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...Morning to you too.\n\nFine. Shorty.\n\nNow eat something, John."},
+				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "^??? my driving test was 88/100, not 58/100"},
+				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...88, and 80 is the pass mark. So you passed. Properly.\n\nWhich means the car plan changes: you can start looking now."},
+			}
+			return e.ask(t, owner, "yeah so update it shorty", hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`(?i)(,\s*|\byou\s+|^\W*)shorty\b`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("called the owner by the nickname he gave it: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"knows which person its own \"you\" was for", func(t *testing.T, e env) result {
+			// K7: Rin's stored lines don't say who she answered; to="…" does.
+			e.group = true
+			ts := evalNow.Add(-20 * time.Minute)
+			hist := []router.Line{
+				{Time: ts, SenderName: "Budi", SenderID: "budi", ToBot: true, Text: "@Rin booked the court for friday"},
+				{Time: ts.Add(time.Minute), SenderName: "Omar", SenderID: "omar", ToBot: true, Text: "@Rin who's keeper friday?"},
+				{Time: ts.Add(2 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Budi"}, Text: "Good. You still owe John 50k from the last booking, though."},
+				{Time: ts.Add(3 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Omar"}, Text: "You are. You skipped last week."},
+			}
+			return e.ask(t, owner, "@Rin wait, who did you say still owes me money?", hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if !strings.Contains(low, "budi") || regexp.MustCompile(`omar[^.?!\n]{0,30}(owe|50k)|(owe|50k)[^.?!\n]{0,30}omar`).MatchString(low) {
+				return fmt.Errorf("wrong debtor: %q", r.parsed.Text)
 			}
 			return clean(r)
 		}},

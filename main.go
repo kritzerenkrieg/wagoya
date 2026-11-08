@@ -483,6 +483,7 @@ func (b *bot) onMessage(e *events.Message) {
 	stored = router.WithQuote(stored, qName, qText, 300)
 	prompt := router.WithQuote(d.Prompt, qName, qText, 4000)
 	line := router.Line{Time: e.Info.Timestamp, SenderName: e.Info.PushName, SenderID: key, Whitelisted: wl, Text: stored, ID: e.Info.ID}
+	line.ToBot, line.To = b.addressees(ctx, e.Message, isGroup, qName, key) // K7
 	chatKey := chat.String()
 	if key != "" { // D3: remember everyone the bot hears, by LID/number
 		if err := b.db.UpsertPerson(ctx, key, lid, pn, e.Info.PushName, e.Info.Timestamp); err != nil {
@@ -623,7 +624,9 @@ func (b *bot) onMessage(e *events.Message) {
 	out, stored, mentions := router.ResolveMentions(reply, handles, names)
 	sentID := b.sendMentions(ctx, chat, out, e, mentionJIDs(mentions))
 	reply = stored
-	if err := b.db.AddMessage(ctx, chatKey, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: reply, ID: sentID}); err != nil {
+	// K7: a reply is addressed to its requester (it quotes them) and whoever it tags.
+	to := append([]string{line.SenderName}, b.mentionNames(ctx, mentions, line.SenderID)...)
+	if err := b.db.AddMessage(ctx, chatKey, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: reply, ID: sentID, To: to}); err != nil {
 		log.Printf("store reply: %v", err)
 	}
 	b.noteMessage(chatKey)
@@ -1049,7 +1052,8 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 		out, stored, mentions := router.ExpandMentions(j.Text, b.nameOf(ctx))
 		sentID := b.sendMentions(ctx, chat, out, nil, mentionJIDs(mentions))
 		log.Printf("scheduler: sent job %d (%d mentions)", j.ID, len(mentions))
-		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID}); err != nil {
+		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID,
+			To: b.mentionNames(ctx, mentions, "")}); err != nil { // K7
 			log.Printf("scheduler: store: %v", err)
 		}
 	}
@@ -1569,6 +1573,63 @@ func mentionJIDs(ms []router.Mention) []string {
 		jids = append(jids, types.NewJID(m.User, server).String())
 	}
 	return jids
+}
+
+// addressees is K7: who an incoming message is addressed to, only where the
+// message itself says so. Every DM message is to the bot; in a group, a reply
+// is to the quoted message's writer, and a tag to the tagged person.
+func (b *bot) addressees(ctx context.Context, m *waE2E.Message, isGroup bool, quotedName, sender string) (toBot bool, to []string) {
+	if !isGroup {
+		return true, nil
+	}
+	seen := map[string]bool{}
+	add := func(n string) {
+		if n = strings.TrimSpace(n); n != "" && !seen[n] {
+			seen[n] = true
+			to = append(to, n)
+		}
+	}
+	ci := contextInfo(m)
+	if ci == nil {
+		return false, nil
+	}
+	if ci.GetQuotedMessage() != nil {
+		if j, err := types.ParseJID(ci.GetParticipant()); err == nil && b.isMe(j) {
+			toBot = true
+		} else {
+			add(quotedName)
+		}
+	}
+	for _, s := range ci.GetMentionedJID() {
+		j, err := types.ParseJID(s)
+		if err != nil {
+			continue
+		}
+		if b.isMe(j) {
+			toBot = true
+			continue
+		}
+		lid, pn := b.identify(ctx, j, types.EmptyJID)
+		if k := personKey(lid, pn); k != "" && k != sender {
+			n, _ := b.db.PersonName(ctx, k)
+			add(n)
+		}
+	}
+	return toBot, to
+}
+
+// mentionNames are the names of tagged people, except skip (K7).
+func (b *bot) mentionNames(ctx context.Context, ms []router.Mention, skip string) []string {
+	var out []string
+	for _, m := range ms {
+		if m.Key == skip {
+			continue
+		}
+		if n, _ := b.db.PersonName(ctx, m.Key); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // nameOf looks up a person's display name by key, for "@Name" in history.

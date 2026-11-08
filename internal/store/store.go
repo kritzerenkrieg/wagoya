@@ -156,8 +156,8 @@ const MessageTTL = 72 * time.Hour
 // in every chat, with their reactions (L6).
 func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages(chat, ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id) VALUES (?,?,?,?,?,?,?,?)`,
-		chat, l.Time.Unix(), l.SenderID, l.SenderName, l.Whitelisted, l.FromBot, l.Text, l.ID)
+		`INSERT INTO messages(chat, ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id, to_bot, to_names) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		chat, l.Time.Unix(), l.SenderID, l.SenderName, l.Whitelisted, l.FromBot, l.Text, l.ID, l.ToBot, joinNames(l.To))
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error)
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM messages
+		`SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id, to_bot, to_names FROM messages
 		 WHERE chat = ? AND id >= ? ORDER BY id`, chat, start)
 	if err != nil {
 		return nil, err
@@ -241,10 +241,11 @@ func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error)
 	for rows.Next() {
 		var l router.Line
 		var ts int64
-		if err := rows.Scan(&ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text, &l.ID); err != nil {
+		var to string
+		if err := rows.Scan(&ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text, &l.ID, &l.ToBot, &to); err != nil {
 			return nil, err
 		}
-		l.Time = time.Unix(ts, 0)
+		l.Time, l.To = time.Unix(ts, 0), splitNames(to)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -252,6 +253,24 @@ func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error)
 	}
 	rows.Close()
 	return out, s.loadReactions(ctx, chat, out)
+}
+
+// K7: addressee names are stored one per line.
+func joinNames(ns []string) string {
+	var out []string
+	for _, n := range ns {
+		if n = strings.Join(strings.Fields(n), " "); n != "" {
+			out = append(out, n)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func splitNames(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }
 
 // WindowBlock is P6: the window shows historyLimit to historyLimit+WindowBlock
@@ -639,7 +658,7 @@ func (s *Store) TakeUnread(ctx context.Context, chat string, min int) ([]router.
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, ts, sender_id, sender_name, whitelisted, from_bot, text FROM messages WHERE chat = ? AND id > ? ORDER BY id`, chat, last)
+		`SELECT id, ts, sender_id, sender_name, whitelisted, from_bot, text, to_bot, to_names FROM messages WHERE chat = ? AND id > ? ORDER BY id`, chat, last)
 	if err != nil {
 		return nil, err
 	}
@@ -647,11 +666,12 @@ func (s *Store) TakeUnread(ctx context.Context, chat string, min int) ([]router.
 	for rows.Next() {
 		var l router.Line
 		var ts int64
-		if err := rows.Scan(&last, &ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text); err != nil {
+		var to string
+		if err := rows.Scan(&last, &ts, &l.SenderID, &l.SenderName, &l.Whitelisted, &l.FromBot, &l.Text, &l.ToBot, &to); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		l.Time = time.Unix(ts, 0)
+		l.Time, l.To = time.Unix(ts, 0), splitNames(to)
 		out = append(out, l)
 	}
 	rows.Close()

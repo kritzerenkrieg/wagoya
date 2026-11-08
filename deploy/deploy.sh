@@ -54,7 +54,9 @@ ssh "$HOST" "set -e; cd ~/$DIR
   mv wagoya.new wagoya
   [ -f .env ] || { cp .env.example .env; echo 'created .env from template: fill it in'; }
   chmod 600 .env; mkdir -p data; chmod 700 data
-  sudo install -m 644 wagoya.service /etc/systemd/system/wagoya.service
+  sed \"s|@USER@|\$(id -un)|g; s|@APP@|\$PWD|g; s|@HOME@|\$HOME|g\" wagoya.service > wagoya.service.local
+  grep -q @ wagoya.service.local && { echo 'unit template not filled in'; exit 1; }
+  sudo install -m 644 wagoya.service.local /etc/systemd/system/wagoya.service
   sudo systemctl daemon-reload
   sudo systemctl enable wagoya >/dev/null
   if [ ! -f data/session.db ]; then echo 'not linked yet: run ./wagoya once interactively to link'; exit 0; fi

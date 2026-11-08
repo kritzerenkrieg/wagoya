@@ -101,7 +101,7 @@ Each triggered request runs in its own goroutine, serialised per chat.
 | WhatsApp | `go.mau.fi/whatsmeow` | A2 |
 | SQLite | `modernc.org/sqlite` (pure Go, FTS5) | C4 |
 | LLM | `anthropic-sdk-go/v2` or `claude` CLI, `claude-haiku-5-5` (default), effort low | A5, B6 |
-| Process manager | systemd (`deploy/wagoya.service`) | C1 |
+| Process manager | systemd (`deploy/wagoya.service`, a template `deploy.sh` fills in with the VPS user and paths) | C1 |
 | Deploy | `deploy/deploy.sh`: cross-compile, resumable rsync, checked restart | C2 |
 
 ## H. Quality targets
@@ -157,7 +157,7 @@ CLI mode (`CLAUDE_CODE_OAUTH_TOKEN`) has no custom tools: memory goes through hi
 | Tool definitions | `memtools`, `tools`, `mcp` | ~1.5k (non-owner) to ~2.0k (owner) tokens | Owner vs non-owner turn |
 | `<chat>` | | tiny | Never within a chat |
 | `<summary>` (J8, K6) | curator | ≤300 words | Each curator pass |
-| `<transcript>`: 64 to 80 lines in blocks of 16 (P6), `[time] Name [P#]: text (reactions…)` | `store.History`, `renderLine` | the largest part | Appended to with each message; the first line changes once per 16. Handles go by first appearance (P5), so who asks doesn't change it |
+| `<transcript>`: 64 to 80 lines in blocks of 16 (P6), `[time] Name [P#] to="…": text (reactions…)` (the label only for a known addressee, K7) | `store.History`, `renderLine` | the largest part | Appended to with each message; the first line changes once per 16. Handles go by first appearance (P5), so who asks doesn't change it |
 | `<people>`: handles, names, owner flag, states (K4), preferences (K1), fact counts; requester first | `main.go` `people` | grows with the group | Every request |
 | `<memories>`: top `MEMORY_RESULTS` by FTS on the request | `store.SearchMemories` | small | Every request |
 | `<reminders>` (N3) | `store.ListJobs` | 0–5 lines | Time left changes every minute |
