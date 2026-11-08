@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -163,7 +164,15 @@ func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) erro
 	if _, err = s.db.ExecContext(ctx,
 		`DELETE FROM messages WHERE ts < ? AND id < COALESCE(
 		   (SELECT m.id FROM messages m WHERE m.chat = messages.chat ORDER BY m.id DESC LIMIT 1 OFFSET ?), -1)`,
-		s.now().Add(-MessageTTL).Unix(), s.historyLimit-1); err != nil {
+		s.now().Add(-MessageTTL).Unix(), s.historyLimit+WindowBlock-1); err != nil {
+		return err
+	}
+	// This chat: expired messages before its window go now (P6: the window
+	// may be up to WindowBlock longer than historyLimit).
+	if start, err := s.windowFrom(ctx, chat); err != nil {
+		return err
+	} else if _, err = s.db.ExecContext(ctx, `DELETE FROM messages WHERE chat = ? AND ts < ? AND id < ?`,
+		chat, s.now().Add(-MessageTTL).Unix(), start); err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
@@ -175,14 +184,9 @@ func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) erro
 // matching the most words of query first, then newest; an empty query pages
 // back from the window. Results are oldest first.
 func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, offset int) ([]router.Line, error) {
-	var start int64
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM messages WHERE chat = ? ORDER BY id DESC LIMIT 1 OFFSET ?`, chat, s.historyLimit-1).Scan(&start)
-	if err == sql.ErrNoRows {
-		return nil, nil // the whole chat fits in the window
-	}
-	if err != nil {
-		return nil, err
+	start, err := s.windowStart(ctx, chat)
+	if err != nil || start == 0 {
+		return nil, err // empty chat
 	}
 	score, args := "0", []any{}
 	for _, w := range queryWords(query) {
@@ -222,10 +226,13 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
 
 // History returns the stored window for chat, oldest first.
 func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error) {
+	start, err := s.windowStart(ctx, chat)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM
-		 (SELECT * FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?) ORDER BY id`,
-		chat, s.historyLimit)
+		`SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM messages
+		 WHERE chat = ? AND id >= ? ORDER BY id`, chat, start)
 	if err != nil {
 		return nil, err
 	}
@@ -245,6 +252,58 @@ func (s *Store) History(ctx context.Context, chat string) ([]router.Line, error)
 	}
 	rows.Close()
 	return out, s.loadReactions(ctx, chat, out)
+}
+
+// WindowBlock is P6: the window shows historyLimit to historyLimit+WindowBlock
+// lines and drops the oldest WindowBlock at once, so its first line, and the
+// prompt prefix a provider can cache, stays put for WindowBlock messages.
+const WindowBlock = 16
+
+// windowStart is the id of the window's first message (0 for an empty
+// chat). The start is kept in settings while at least historyLimit messages
+// follow it and it is still among the last historyLimit+WindowBlock;
+// otherwise it moves to show exactly the last historyLimit.
+func (s *Store) windowStart(ctx context.Context, chat string) (int64, error) {
+	start, err := s.windowFrom(ctx, chat)
+	if err != nil || start == 0 {
+		return 0, err
+	}
+	if err := s.SetSetting(ctx, "window:"+chat, strconv.FormatInt(start, 10)); err != nil {
+		return 0, err
+	}
+	return start, nil
+}
+
+// windowFrom works out the window's first message id without saving it.
+func (s *Store) windowFrom(ctx context.Context, chat string) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM messages WHERE chat = ? ORDER BY id DESC LIMIT ?`, chat, s.historyLimit+WindowBlock)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64 // newest first
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(ids) == 0 {
+		return 0, err
+	}
+	key := "window:" + chat
+	if v, _ := s.Setting(ctx, key); v != "" {
+		if kept, err := strconv.ParseInt(v, 10, 64); err == nil {
+			for n, id := range ids {
+				if id == kept && n+1 >= s.historyLimit {
+					return kept, nil
+				}
+			}
+		}
+	}
+	return ids[min(len(ids), s.historyLimit)-1], nil
 }
 
 // AddMemories stores memories for chat, skipping exact duplicates. They are

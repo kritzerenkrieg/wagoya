@@ -132,3 +132,62 @@ cmd/claude-runner   laptop runner for Claude Code tasks (O2, not deployed)
 deploy/             systemd unit, deploy script
 data/               runtime state (gitignored, secret)
 ```
+
+## K. Model harness
+
+Every model call the bot makes, what it sends, and what it costs. Measured 2026-11-06..08 on kritz (1,274 calls, $3.47 over 3 days, model `deepseek/deepseek-v4.1-flash-1017` via OpenRouter).
+
+### Call sites
+
+| Call | Code | Client | When | Tools | Rounds | Share of spend |
+|---|---|---|---|---|---|---|
+| Reply | `main.go` `reply` → `llm.Reply` | main | Every trigger that passes Decide, mutes (M2), flood (M1) and budget (M3) | memory 5, schedule 3, `http_request`, owners also MCP and Claude Code 5, plus OpenRouter web tools | 1.24 avg, max 8 (`maxToolRounds`), the last forced to answer | 91% ($0.0030 per reply) |
+| Curator pass | `main.go` `curate` | curator (no web) | 16 unread messages in a chat (`curateEvery`), or 10 min quiet with any unread (`curateIdle`) | `save_fact` only | 2.05 avg | 9% ($0.0014 per pass) |
+| Flood check | `flood.go` `floodCheck` | curator | A non-owner's 10th message in 2 minutes (M1) | none | 1 | under 1% |
+| Task note | `claudetasks.go` `taskNote` | curator | A Claude Code task changes status (O5) | none | 1 | under 1% |
+| Embeddings | `main.go` `runEmbedder` | `EMBED_MODEL` | New or reworded facts, and every 10 min | — | — | not counted (fractions of a cent) |
+
+CLI mode (`CLAUDE_CODE_OAUTH_TOKEN`) has no custom tools: memory goes through hidden tags parsed from the reply (B12, D4) instead.
+
+### Reply request, in send order (P4)
+
+| Part | Built by | Size | Changes |
+|---|---|---|---|
+| System prompt: rules + persona | `router.SystemPrompt` | ~2.0k tokens + persona | Only on a persona change |
+| Tool definitions | `memtools`, `tools`, `mcp` | ~1.5k (non-owner) to ~2.0k (owner) tokens | Owner vs non-owner turn |
+| `<chat>` | | tiny | Never within a chat |
+| `<summary>` (J8, K6) | curator | ≤300 words | Each curator pass |
+| `<transcript>`: 64 to 80 lines in blocks of 16 (P6), `[time] Name [P#]: text (reactions…)` | `store.History`, `renderLine` | the largest part | Appended to with each message; the first line changes once per 16. Handles go by first appearance (P5), so who asks doesn't change it |
+| `<people>`: handles, names, owner flag, states (K4), preferences (K1), fact counts; requester first | `main.go` `people` | grows with the group | Every request |
+| `<memories>`: top `MEMORY_RESULTS` by FTS on the request | `store.SearchMemories` | small | Every request |
+| `<reminders>` (N3) | `store.ListJobs` | 0–5 lines | Time left changes every minute |
+| `<now>` | | tiny | Every minute |
+| `<request from=… id=…>` | | capped | Every request |
+
+Everything up to the end of `<transcript>` is the same from one request to the next in a chat until a curator pass or a block eviction, so the provider can serve it from cache.
+
+`router.FitPromptWith` keeps the whole request under `CONTEXT_TOKENS` (128k), trimming old transcript lines first, then memories, then the request. It uses a bytes-per-token ratio learned from each reply's first-round prompt count (J5). A typical first round is ~12k tokens; with the tool rounds, a reply sends ~17.8k tokens in total and gets ~410 back (reasoning included, hidden with `exclude`).
+
+### Tool loop (`internal/llm/openrouter.go`)
+
+Every call asks OpenRouter for the cheapest provider at fp8 or better first (P3, P7). Rounds 2+ ask for the provider that answered round 1 (P2), so its cache holds the shared prefix. Each cost line logs the cached tokens and providers (P1). Each round resends the system prompt, the user prompt and every earlier tool call and result, so round N costs at least as much as round 1. Tool results are text for the model. Errors go back as `error: …` for the model to fix (J3), never silently dropped. Calls named `openrouter:*` are run by OpenRouter itself.
+
+### After the model
+
+The reply goes through these steps in order:
+1. `ParseReply` strips hidden tags; in CLI mode, `applyTags` applies them.
+2. The O5 marker is added if the turn queued Claude Code work.
+3. `ResolveMentions` pins and expands tags (L3, L10).
+4. The pacer queues the send (B18).
+5. The reply is stored as history with `@Name`.
+6. `noteMessage` may start a curator pass.
+
+### Where the money goes
+
+On OpenRouter, the price of this model depends on the provider a request lands on: uncached input runs from $0.006 to $2.40 per million tokens, while a cache hit is $0.002–0.010 on every provider. Production paid about $0.16 per million input tokens, against $0.60 per million for output. So uncached input is about 90% of a reply's cost and output about 8%. 87% of replies come within 5 minutes of the previous reply in the same chat. Before Phase P, little of each request could come from a provider's cache:
+- Default routing spread requests across providers.
+- The parts that change on every request came before the transcript.
+- Requester-first handles renumbered every transcript line when someone else triggered Rin.
+- The 64-line window shifted by one line per message.
+
+P1-P6 address each of these.

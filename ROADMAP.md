@@ -153,7 +153,14 @@ flowchart LR
 **Goal:** an owner gets coding work done by asking Rin, with Claude Code running on their laptop.
 **Exit:** a task asked for in WhatsApp ends as a commit on its own branch, reported back in the chat, and pushed only when the owner asks.
 
-- [ ] Task queue, tools, runner and markers (O1-O5). Done when: store tests cover the lifecycle, atomic claim, follow-up sessions and expiry; memtools tests show non-owners are refused and the limits hold; the `wagoya task` round trip and marker tests pass; the live runner test (`CLAUDE_LIVE=1`) commits on `claude/task-N` and resumes the same session; the golden cases "owner's coding request becomes a Claude Code task", "non-owner can't queue Claude Code", "owner asks to push a finished task" and "owner's answer goes back to Claude Code" pass; and live, a DM'd task gets `[Orchestration Initiated]`, then `[Orchestration Completed]` with the branch and diff stat, and "push it" puts the branch on GitHub.
+- [ ] Task queue, tools, runner and markers (O1-O5). Done when: store tests cover the lifecycle, atomic claim, follow-up sessions and expiry; memtools tests show non-owners are refused and the limits hold; the `wagoya task` round trip and marker tests pass; the live runner test (`CLAUDE_LIVE=1`) commits on `claude/task-N` and resumes the same session; the golden cases "owner's coding request becomes a Claude Code task", "non-owner can't queue Claude Code", "owner asks to push a finished task", "owner's answer goes back to Claude Code" and "a status question is not an answer to Claude Code" pass (O8: the answer is the owner's exact words); and live, a DM'd task gets `[Orchestration Initiated]`, then `[Orchestration Completed]` with the branch and diff stat, and "push it" puts the branch on GitHub.
+
+## Phase P: Harness cost
+
+**Goal:** the same replies for less money.
+**Exit:** the cost log shows cache hits and providers, and the daily cost per reply drops with the golden set still passing.
+
+- [ ] Cache-friendly harness (P1-P6). Done when: router, store and llm tests cover the order, stable handles, block window and provider pinning; the golden set passes; and live, a day of cost lines shows most reply prompt tokens cached, with the cost per reply compared to the 2026-11-06..08 baseline ($0.0030).
 
 ## Cycle: feature and maintenance
 

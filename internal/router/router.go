@@ -146,6 +146,8 @@ var Categories = []string{"person", "fact", "decision", "plan", "preference"}
 // AssignHandles gives every distinct sender in history, and the requester, a
 // handle P1, P2, ... and returns handle -> person key. Claude only ever sees
 // handles, so it can't address people who aren't in the prompt (D4).
+// P5: numbered by first appearance in history, the requester last if new,
+// so the transcript renders the same whoever asks (a stable cache prefix).
 func AssignHandles(history []Line, requester *Line) map[string]string {
 	byKey := map[string]string{}
 	handles := map[string]string{}
@@ -161,10 +163,10 @@ func AssignHandles(history []Line, requester *Line) map[string]string {
 		}
 		l.Handle = h
 	}
-	assign(requester)
 	for i := range history {
 		assign(&history[i])
 	}
+	assign(requester)
 	return handles
 }
 
@@ -266,9 +268,25 @@ func oneLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// BuildPrompt renders people, memories, the recent transcript and the request.
+// BuildPrompt renders the prompt. P4: what changes least comes first, so a
+// provider's prompt cache can reuse it: the chat kind, the summary (one per
+// curator pass) and the transcript (stable for a window block, P6), then
+// what changes with every request: people, memories, reminders, the time.
 func BuildPrompt(p Prompt) string {
 	var b strings.Builder
+	if p.Group {
+		b.WriteString("<chat>group chat</chat>\n\n")
+	} else {
+		b.WriteString("<chat>private DM with the requester</chat>\n\n")
+	}
+	if s := strings.TrimSpace(p.Summary); s != "" {
+		fmt.Fprintf(&b, "<summary>\n%s\n</summary>\n\n", clean(s))
+	}
+	b.WriteString("<transcript>\n")
+	for _, l := range p.History {
+		b.WriteString(renderLine(l))
+	}
+	b.WriteString("</transcript>\n\n")
 	if len(p.People) > 0 {
 		b.WriteString("<people>\n")
 		for _, pr := range p.People {
@@ -306,17 +324,6 @@ func BuildPrompt(p Prompt) string {
 		}
 		b.WriteString("</memories>\n\n")
 	}
-	if !p.Now.IsZero() {
-		fmt.Fprintf(&b, "<now>%s</now>\n\n", p.Now.Format("Monday 2006-01-02 15:04 MST"))
-	}
-	if p.Group {
-		b.WriteString("<chat>group chat</chat>\n\n")
-	} else {
-		b.WriteString("<chat>private DM with the requester</chat>\n\n")
-	}
-	if s := strings.TrimSpace(p.Summary); s != "" {
-		fmt.Fprintf(&b, "<summary>\n%s\n</summary>\n\n", clean(s))
-	}
 	if len(p.Reminders) > 0 && !p.Now.IsZero() {
 		b.WriteString("<reminders>\n")
 		for i, r := range p.Reminders {
@@ -331,11 +338,9 @@ func BuildPrompt(p Prompt) string {
 		}
 		b.WriteString("</reminders>\n\n")
 	}
-	b.WriteString("<transcript>\n")
-	for _, l := range p.History {
-		b.WriteString(renderLine(l))
+	if !p.Now.IsZero() {
+		fmt.Fprintf(&b, "<now>%s</now>\n\n", p.Now.Format("Monday 2006-01-02 15:04 MST"))
 	}
-	b.WriteString("</transcript>\n\n")
 	img := ""
 	if p.HasImage {
 		img = ` image="attached"`

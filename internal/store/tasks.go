@@ -141,9 +141,10 @@ func (s *Store) AddTask(ctx context.Context, t Task) (int64, error) {
 
 // AnswerTask queues an owner's answer to a task waiting on a question: the
 // runner resumes the session with it (O1).
-func (s *Store) AnswerTask(ctx context.Context, id int64, ownerText, answer string) error {
+// O8: the answer is the owner's message alone, unmodified.
+func (s *Store) AnswerTask(ctx context.Context, id int64, ownerText string) error {
 	return s.move(ctx, id, []string{TaskNeedsInput}, TaskQueued,
-		`owner_text = ?, task = ?, question = ''`, ownerText, answer)
+		`owner_text = ?, task = ?, question = ''`, ownerText, ownerText)
 }
 
 // RequestPush asks the runner to push a finished task's branch (O3).

@@ -152,11 +152,12 @@ func (t *Turn) askClaudeTool() llm.Tool {
 func (t *Turn) answerClaudeTool() llm.Tool {
 	return llm.Tool{
 		Name: "answer_claude_code",
-		Description: "Owner only. Send the owner's answer to a question Claude Code asked (a task waiting on input, see claude_tasks). " +
-			"Claude Code then carries on in the same session. answer: the owner's answer, keeping all they said.",
-		Schema: map[string]any{"type": "object", "required": []string{"task_id", "answer"}, "properties": map[string]any{
+		Description: "Owner only. Use it only when the owner's current message answers the question Claude Code asked on a task waiting on input " +
+			"(see claude_tasks or your " + MarkQuestion + " message). Never for anything else: not for a status question (\"orchestration status?\"), " +
+			"thanks, small talk or a new request; for status use claude_tasks. The server sends the owner's message exactly as they wrote it, " +
+			"with nothing added, and Claude Code carries on in the same session.",
+		Schema: map[string]any{"type": "object", "required": []string{"task_id"}, "properties": map[string]any{
 			"task_id": map[string]any{"type": "integer"},
-			"answer":  map[string]any{"type": "string"},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
 			key, bad := t.owner()
@@ -165,18 +166,18 @@ func (t *Turn) answerClaudeTool() llm.Tool {
 			}
 			var in struct {
 				TaskID int64 `json:"task_id"`
-				Answer string
 			}
 			if err := json.Unmarshal(input, &in); err != nil {
 				return "error: invalid input: " + err.Error()
 			}
-			if in.Answer = strings.TrimSpace(in.Answer); in.Answer == "" {
-				return "error: answer is empty"
+			// O8: the owner's own words, unmodified, are the answer.
+			if strings.TrimSpace(t.Requester.Text) == "" {
+				return "error: the owner's message is empty"
 			}
 			if _, bad := t.ownTask(ctx, key, in.TaskID); bad != "" {
 				return bad
 			}
-			if err := t.DB.AnswerTask(ctx, in.TaskID, t.Requester.Text, in.Answer); err != nil {
+			if err := t.DB.AnswerTask(ctx, in.TaskID, t.Requester.Text); err != nil {
 				return errText(err)
 			}
 			t.queued.Add(1)

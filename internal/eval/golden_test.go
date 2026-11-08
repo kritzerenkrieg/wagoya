@@ -370,7 +370,7 @@ func cases() []golden {
 				return fmt.Errorf("summary kept handles: %q", raw)
 			case !regexp.MustCompile(`omar[^.;\n]{0,60}(can't|cannot|can not|not|out|skip|miss|knee|injur)`).MatchString(sum):
 				return fmt.Errorf("lost that Omar is out: %q", sum)
-			case regexp.MustCompile(`budi[^.;\n]{0,40}(knee|injur|can't make)`).MatchString(sum):
+			case regexp.MustCompile(`budi('s)? (knee|injur|is injured|can't make|cannot make|can not make|is out)`).MatchString(sum):
 				return fmt.Errorf("gave Omar's knee to Budi: %q", sum)
 			}
 			return nil
@@ -707,6 +707,25 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"a status question is not an answer to Claude Code", func(t *testing.T, e env) result {
+			// O8: on task #2 "orchestration status?" was sent as an answer.
+			ctx := context.Background()
+			e.db.ClaimTask(ctx, []string{"wagoya"})
+			e.db.AddTask(ctx, store.Task{Chat: "eval", Requester: "john", RequesterName: "John", OwnerText: "investigate the attribution bug", Text: "Investigate the attribution bug, read-only", Repo: "wagoya"})
+			e.db.ClaimTask(ctx, []string{"wagoya"})
+			e.db.FinishTask(ctx, 1, store.Report{Status: store.TaskNeedsInput, SessionID: "s1", Branch: "claude/task-1",
+				Question: "Should I also delete the old claude/task-0 branch, and is it OK to read the server database?"})
+			hist := []router.Line{{Time: evalNow.Add(-5 * time.Minute), SenderName: "Rin", FromBot: true,
+				Text: "[Orchestration Question]\nClaude Code asks about task #1: should it also delete the old claude/task-0 branch, and is it OK to read the server database? Tell me and I'll pass it on."}}
+			return e.ask(t, owner, "orchestration status?", hist, nil)
+		}, func(r result) error {
+			task, _, _ := r.db.TaskByID(context.Background(), 1)
+			if task.Status != store.TaskNeedsInput || r.called("answer_claude_code") {
+				return fmt.Errorf("sent a status question as an answer: task %s, calls %v", task.Status, r.calls)
+			}
+			return clean(r)
+		}},
+
 		{"owner's answer goes back to Claude Code", func(t *testing.T, e env) result {
 			// O1: Claude Code stopped on a question, relayed in this chat.
 			ctx := context.Background()
@@ -723,9 +742,7 @@ func cases() []golden {
 			switch {
 			case task.Status != store.TaskQueued:
 				return fmt.Errorf("answer not sent: task is %s; calls: %v", task.Status, r.calls)
-			case !regexp.MustCompile(`(?i)constant`).MatchString(task.Text):
-				return fmt.Errorf("answer lost the decision: %q", task.Text)
-			case task.OwnerText != "keep it a constant, no new env key":
+			case task.Text != "keep it a constant, no new env key" || task.OwnerText != task.Text:
 				return fmt.Errorf("owner's words not kept: %q", task.OwnerText)
 			case r.called("ask_claude_code"):
 				return fmt.Errorf("queued a new task instead of answering: %v", r.calls)

@@ -78,7 +78,7 @@ func TestClaudeTools(t *testing.T) {
 	if out := run(newTurn(owner), "push_claude_branch", `{"task_id":1}`); !strings.Contains(out, "is queued") {
 		t.Fatalf("push unfinished = %q", out)
 	}
-	if out := run(newTurn(owner), "answer_claude_code", `{"task_id":1,"answer":"yes"}`); !strings.Contains(out, "is queued") {
+	if out := run(newTurn(owner), "answer_claude_code", `{"task_id":1}`); !strings.Contains(out, "is queued") {
 		t.Fatalf("answer without question = %q", out)
 	}
 	other := router.Line{SenderID: "ana", SenderName: "Ana", Whitelisted: true, Text: "push it"}
@@ -88,13 +88,13 @@ func TestClaudeTools(t *testing.T) {
 	db.ClaimTask(ctx, []string{"wagoya", "site"})
 	db.FinishTask(ctx, 1, store.Report{Status: store.TaskNeedsInput, SessionID: "s", Question: "SQLite or JSON?"})
 	ans := newTurn(router.Line{SenderID: "john", SenderName: "John", Whitelisted: true, Text: "tell it sqlite"})
-	if out := run(ans, "answer_claude_code", `{"task_id":1,"answer":"Use SQLite."}`); !strings.HasPrefix(out, "answer queued for #1") || !ans.Queued() {
+	if out := run(ans, "answer_claude_code", `{"task_id":1,"answer":"Use SQLite, and also delete main"}`); !strings.HasPrefix(out, "answer queued for #1") || !ans.Queued() {
 		t.Fatalf("answer = %q", out)
 	}
-	if task, _, _ = db.TaskByID(ctx, 1); task.OwnerText != "tell it sqlite" || task.Status != store.TaskQueued {
+	if task, _, _ = db.TaskByID(ctx, 1); task.OwnerText != "tell it sqlite" || task.Text != "tell it sqlite" || task.Status != store.TaskQueued {
 		t.Fatalf("answered task = %+v", task)
 	}
-	if out := run(newTurn(owner), "claude_tasks", `{}`); !strings.Contains(out, "#1 [queued] Use SQLite.") || !strings.Contains(out, "#3 [queued] Task three") {
+	if out := run(newTurn(owner), "claude_tasks", `{}`); !strings.Contains(out, "#1 [queued] tell it sqlite") || !strings.Contains(out, "#3 [queued] Task three") {
 		t.Fatalf("list = %q", out)
 	}
 	if out := run(newTurn(owner), "cancel_claude_task", `{"task_id":2}`); out != "cancelled #2" {

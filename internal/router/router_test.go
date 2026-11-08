@@ -83,11 +83,22 @@ func TestAssignHandles(t *testing.T) {
 	}
 	req := Line{SenderID: "lidB"}
 	h := AssignHandles(hist, &req)
-	if req.Handle != "P1" || h["P1"] != "lidB" || h["P2"] != "lidA" || len(h) != 2 {
+	// P5: by first appearance in history, whoever asks.
+	if req.Handle != "P2" || h["P1"] != "lidA" || h["P2"] != "lidB" || len(h) != 2 {
 		t.Fatalf("handles: req=%q map=%v", req.Handle, h)
 	}
-	if hist[0].Handle != "P2" || hist[1].Handle != "" || hist[2].Handle != "P1" || hist[3].Handle != "P2" || hist[4].Handle != "" {
+	if hist[0].Handle != "P1" || hist[1].Handle != "" || hist[2].Handle != "P2" || hist[3].Handle != "P1" || hist[4].Handle != "" {
 		t.Fatalf("line handles: %+v", hist)
+	}
+	// Another requester: the transcript renders the same.
+	before := BuildPrompt(Prompt{History: hist})
+	other := Line{SenderID: "lidC"}
+	h = AssignHandles(hist, &other)
+	if other.Handle != "P3" || h["P1"] != "lidA" || h["P2"] != "lidB" {
+		t.Fatalf("new requester: req=%q map=%v", other.Handle, h)
+	}
+	if after := BuildPrompt(Prompt{History: hist}); after != before {
+		t.Fatalf("transcript changed with the requester:\n%s\n%s", before, after)
 	}
 }
 

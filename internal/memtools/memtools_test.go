@@ -57,14 +57,14 @@ func facts(db *store.Store, key string) []store.Fact {
 
 func TestSaveFactChecksAndTiers(t *testing.T) {
 	db, turn := setup(t)
-	// Budi is P1, Ana P2 (she spoke).
-	tr, call := turn(budi, "P1", "P2")
+	// Budi is P2, Ana P1 (she spoke).
+	tr, call := turn(budi, "P2", "P1")
 	for in, want := range map[string]string{
-		`{"subject":"P1","content":"nurse"}`:                                 "short label",
+		`{"subject":"P2","content":"nurse"}`:                                 "short label",
 		`{"subject":"P9","content":"Job: nurse"}`:                            "no participant",
-		`{"subject":"P1","content":"Job: nurse","kind":"rumor"}`:             "kind must be",
+		`{"subject":"P2","content":"Job: nurse","kind":"rumor"}`:             "kind must be",
 		`{"subject":"","content":"Job: nurse"}`:                              "subject is empty",
-		`{"subject":"P1","content":"Job: ` + strings.Repeat("x", 200) + `"}`: "too long",
+		`{"subject":"P2","content":"Job: ` + strings.Repeat("x", 200) + `"}`: "too long",
 	} {
 		if got := call("save_fact", in); !strings.Contains(got, want) {
 			t.Errorf("%s: got %q, want %q", in, got, want)
@@ -74,9 +74,9 @@ func TestSaveFactChecksAndTiers(t *testing.T) {
 		t.Fatal("rejected input was saved")
 	}
 	// About himself: self. About Ana, from Budi: hearsay. Ana said it herself: self.
-	call("save_fact", `{"subject":"P1","content":"Job: nurse"}`)
-	call("save_fact", `{"subject":"P2","content":"Job: dentist"}`)
-	call("save_fact", `{"subject":"P2","content":"Likes: chess","source":"self"}`)
+	call("save_fact", `{"subject":"P2","content":"Job: nurse"}`)
+	call("save_fact", `{"subject":"P1","content":"Job: dentist"}`)
+	call("save_fact", `{"subject":"P1","content":"Likes: chess","source":"self"}`)
 	call("save_fact", `{"subject":"Omar","content":"Likes: war history","kind":"claim"}`)
 	if got := facts(db, "budi"); len(got) != 1 || got[0].Tier != store.TierSelf {
 		t.Fatalf("budi: %+v", got)
@@ -93,8 +93,8 @@ func TestSaveFactChecksAndTiers(t *testing.T) {
 		t.Fatalf("omar: %v", omar)
 	}
 	// source self needs the subject to have spoken.
-	_, call2 := turn(budi, "P1")
-	if got := call2("save_fact", `{"subject":"P2","content":"Likes: tea","source":"self"}`); !strings.Contains(got, "source self") {
+	_, call2 := turn(budi, "P2")
+	if got := call2("save_fact", `{"subject":"P1","content":"Likes: tea","source":"self"}`); !strings.Contains(got, "source self") {
 		t.Fatalf("self without speaking: %q", got)
 	}
 }
@@ -104,20 +104,20 @@ func TestInvalidateRights(t *testing.T) {
 	ctx := context.Background()
 	db.AddPersonFacts(ctx, "ana", store.Source{Chat: "g", SaidBy: "ana", Tier: store.TierSelf}, []string{"Job: nurse"})
 	db.AddPersonFacts(ctx, "budi", store.Source{Chat: "g", SaidBy: "budi", Tier: store.TierSelf}, []string{"Job: driver"})
-	_, call := turn(budi, "P1", "P2")
-	res := call("search_facts", `{"person":"P2"}`)
-	id := regexp.MustCompile(`fact (\d+) \| P2: Job: nurse`).FindStringSubmatch(res)
+	_, call := turn(budi, "P2", "P1")
+	res := call("search_facts", `{"person":"P1"}`)
+	id := regexp.MustCompile(`fact (\d+) \| P1: Job: nurse`).FindStringSubmatch(res)
 	if id == nil {
 		t.Fatalf("search result has no id: %q", res)
 	}
 	if got := call("invalidate_fact", `{"id":`+id[1]+`,"reason":"quit"}`); !strings.Contains(got, "only owners") {
 		t.Fatalf("budi retracted ana's fact: %q", got)
 	}
-	bid := regexp.MustCompile(`fact (\d+) \|`).FindStringSubmatch(call("search_facts", `{"person":"P1"}`))[1]
+	bid := regexp.MustCompile(`fact (\d+) \|`).FindStringSubmatch(call("search_facts", `{"person":"P2"}`))[1]
 	if got := call("invalidate_fact", `{"id":`+bid+`,"reason":"new job"}`); got != "done" {
 		t.Fatalf("budi could not retract his own fact: %q", got)
 	}
-	_, owner := turn(john, "P1")
+	_, owner := turn(john, "P2")
 	if got := owner("invalidate_fact", `{"id":`+id[1]+`,"reason":"asked to forget"}`); got != "done" {
 		t.Fatalf("owner: %q", got)
 	}

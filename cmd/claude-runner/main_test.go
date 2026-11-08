@@ -43,7 +43,11 @@ func TestPrompts(t *testing.T) {
 		t.Errorf("follow-up prompt = %q", p)
 	}
 	if p := resumePrompt(store.Task{OwnerText: "tell it sqlite", Text: "Use SQLite."}); !strings.Contains(p, "tell it sqlite") || !strings.Contains(p, "Use SQLite.") {
-		t.Errorf("resume prompt = %q", p)
+		t.Errorf("follow-up resume prompt = %q", p)
+	}
+	// O8: an answer is the owner's words alone.
+	if p := resumePrompt(store.Task{OwnerText: "ye read only", Text: "ye read only"}); !strings.Contains(p, "<owner>\nye read only\n</owner>") || strings.Contains(p, "relay") {
+		t.Errorf("answer resume prompt = %q", p)
 	}
 }
 

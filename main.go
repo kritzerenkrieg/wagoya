@@ -659,9 +659,20 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 		}
 		wl[l.Handle] = wl[l.Handle] || l.Whitelisted
 	}
-	keys := make([]string, 0, len(handles))
+	// <people> lists the requester first, then by handle (P5: the requester
+	// is no longer always P1).
+	order := make([]string, 0, len(handles))
+	if handles[req.Handle] != "" {
+		order = append(order, req.Handle)
+	}
 	for i := 1; i <= len(handles); i++ {
-		keys = append(keys, handles[fmt.Sprintf("P%d", i)])
+		if h := fmt.Sprintf("P%d", i); h != req.Handle {
+			order = append(order, h)
+		}
+	}
+	keys := make([]string, 0, len(order))
+	for _, h := range order {
+		keys = append(keys, handles[h])
 	}
 	// D7: with tools, Claude searches facts itself and sees only counts;
 	// without (CLI), every fact goes inline and FitPrompt trims to 128k.
@@ -685,12 +696,12 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 		}
 	}
 	out := make([]router.Person, 0, len(keys))
-	for i, k := range keys { // P1 is the requester (AssignHandles assigns it first)
-		h := fmt.Sprintf("P%d", i+1)
+	for i, k := range keys { // keys[0] is the requester
+		h := order[i]
 		p := router.Person{Handle: h, Name: names[h], Whitelisted: wl[h], Facts: facts[k], FactCount: counts[k]}
 		// K1: the requester's standing preferences go in every prompt, even
 		// when the other facts are only searchable (D7).
-		if i == 0 && b.claude.SupportsTools() {
+		if h == req.Handle && b.claude.SupportsTools() {
 			if p.Preferences, err = b.db.Preferences(ctx, k); err != nil {
 				log.Printf("preferences: %v", err)
 			}
@@ -1419,7 +1430,11 @@ func logStats(what string, st llm.Stats, day float64) {
 	if day > 0 {
 		extra += fmt.Sprintf("; today $%.4f of $%.2f", day, dailyBudget)
 	}
-	log.Printf("cost %s: $%.5f, %d rounds, %d prompt + %d output tokens%s", what, st.Cost, st.Rounds, st.PromptTokens, st.OutputTokens, extra)
+	via := ""
+	if len(st.Providers) > 0 { // P1
+		via = " via " + strings.Join(st.Providers, ",")
+	}
+	log.Printf("cost %s: $%.5f, %d rounds, %d prompt (%d cached) + %d output tokens%s%s", what, st.Cost, st.Rounds, st.PromptTokens, st.CachedTokens, st.OutputTokens, via, extra)
 }
 
 // ---- L5: group member awareness ----

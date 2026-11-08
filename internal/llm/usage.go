@@ -26,7 +26,9 @@ type Stats struct {
 	Rounds       int     // model calls, including tool rounds
 	PromptTokens int     // summed over rounds
 	OutputTokens int
-	WebSearches  int // server-side web search calls
+	WebSearches  int      // server-side web search calls
+	CachedTokens int      // prompt tokens served from the provider's cache (P1)
+	Providers    []string // who served the rounds, in order (P1)
 }
 
 type statsKey struct{}

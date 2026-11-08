@@ -469,8 +469,16 @@ func TestReactions(t *testing.T) {
 		t.Fatalf("after removal: %+v", h[0].Reactions)
 	}
 	s.SetClock(func() time.Time { return now.Add(MessageTTL + time.Hour) }) // L9: past the retention
+	// P6: m1 stays while it is in the window's block, then goes with it.
 	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "a", ID: "m2"})
-	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "b", ID: "m3"}) // m1 pruned
+	if h, _ := s.History(ctx, "g"); len(h) != 2 || h[0].ID != "m1" {
+		t.Fatalf("m1 left the window early: %+v", h)
+	}
+	for i := 0; i < WindowBlock; i++ {
+		s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "b", ID: fmt.Sprintf("x%d", i)})
+	}
+	s.History(ctx, "g")                                                                                     // the window moves past m1
+	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "John", SenderID: "john", Text: "c", ID: "m3"}) // m1 pruned
 	var n int
 	s.db.QueryRow(`SELECT count(*) FROM reactions`).Scan(&n)
 	if n != 0 {
@@ -612,5 +620,44 @@ func TestRewriteSummaries(t *testing.T) {
 	n, err := s.RewriteSummaries(ctx, func(t string) string { return strings.ReplaceAll(t, " (P1)", "") })
 	if got, _ := s.Summary(ctx, "a"); err != nil || n != 1 || got != "John and Budi." {
 		t.Fatalf("rewrite = %d %v %q", n, err, got)
+	}
+}
+
+func TestWindowBlocks(t *testing.T) {
+	// P6: the window shows limit..limit+WindowBlock lines and its first line
+	// stays put until it drops a whole block.
+	const limit = 4
+	s, err := Open(filepath.Join(t.TempDir(), "bot.db"), limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	add := func(i int) {
+		s.AddMessage(ctx, "g", router.Line{Time: time.Now(), SenderName: "John", SenderID: "john", Text: fmt.Sprint(i)})
+	}
+	first := func() (string, int) {
+		h, _ := s.History(ctx, "g")
+		return h[0].Text, len(h)
+	}
+	for i := 1; i <= limit; i++ {
+		add(i)
+	}
+	if f, n := first(); f != "1" || n != limit {
+		t.Fatalf("start: first %s, %d lines", f, n)
+	}
+	for i := limit + 1; i <= limit+WindowBlock; i++ {
+		add(i)
+		if f, n := first(); f != "1" || n != i {
+			t.Fatalf("after %d: first %s, %d lines; want 1 and %d", i, f, n, i)
+		}
+	}
+	add(limit + WindowBlock + 1) // one more: drop the block, show exactly limit
+	if f, n := first(); f != fmt.Sprint(WindowBlock+2) || n != limit {
+		t.Fatalf("after the block: first %s, %d lines", f, n)
+	}
+	add(limit + WindowBlock + 2)
+	if f, n := first(); f != fmt.Sprint(WindowBlock+2) || n != limit+1 {
+		t.Fatalf("next block: first %s, %d lines", f, n)
 	}
 }

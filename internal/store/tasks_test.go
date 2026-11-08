@@ -55,11 +55,11 @@ func TestTaskLifecycle(t *testing.T) {
 	if err := s.RequestPush(ctx, id); err == nil {
 		t.Fatal("pushed a task waiting on a question")
 	}
-	if err := s.AnswerTask(ctx, id, "use sqlite", "Use SQLite."); err != nil {
+	if err := s.AnswerTask(ctx, id, "use sqlite"); err != nil {
 		t.Fatal(err)
 	}
 	c, ok, _ = s.ClaimTask(ctx, nil)
-	if !ok || c.Action != "resume" || c.Task.SessionID != "sess" || c.Task.Text != "Use SQLite." {
+	if !ok || c.Action != "resume" || c.Task.SessionID != "sess" || c.Task.Text != "use sqlite" || c.Task.OwnerText != "use sqlite" {
 		t.Fatalf("resume claim = %+v", c)
 	}
 	s.FinishTask(ctx, id, Report{Status: TaskDone, Result: "Added X."})

@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -91,7 +92,15 @@ type orRequest struct {
 	ToolChoice string         `json:"tool_choice,omitempty"`
 	MaxTokens  int            `json:"max_tokens"`
 	Reasoning  map[string]any `json:"reasoning,omitempty"`
+	Provider   map[string]any `json:"provider,omitempty"` // P2, P3
 }
+
+// cheapestFirst is P3: OpenRouter tries this model's providers cheapest
+// first instead of balancing load across them. P7: only at fp8 or better;
+// on fp4 the model broke prompt rules far more often.
+var cheapestFirst = map[string]any{"sort": "price", "quantizations": precisionFloor}
+
+var precisionFloor = []string{"fp8", "bf16", "fp16", "fp32"}
 
 type orResponse struct {
 	Choices []struct {
@@ -104,10 +113,14 @@ type orResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
-	Usage struct {
-		Cost             float64 `json:"cost"`
-		PromptTokens     int     `json:"prompt_tokens"`
-		CompletionTokens int     `json:"completion_tokens"`
+	Provider string `json:"provider"` // who served it (P1)
+	Usage    struct {
+		Cost                float64 `json:"cost"`
+		PromptTokens        int     `json:"prompt_tokens"`
+		CompletionTokens    int     `json:"completion_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 }
 
@@ -177,6 +190,7 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 		Tools:     c.tools(tools),
 		MaxTokens: 16000,
 		Reasoning: map[string]any{"effort": orEffort(c.effort), "exclude": true},
+		Provider:  cheapestFirst,
 	}
 	markupRetries := 0
 	for round := 0; ; round++ {
@@ -189,6 +203,7 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 		}
 		if round == 0 {
 			reportPromptTokens(ctx, resp.Usage.PromptTokens) // J5
+			req.Provider = stickTo(resp.Provider)            // P2
 		}
 		if len(resp.Choices) == 0 {
 			return "", errors.New("openrouter: no choices in response")
@@ -286,8 +301,22 @@ func (c *orClient) post(ctx context.Context, body orRequest) (*orResponse, error
 		st.Rounds++
 		st.PromptTokens += out.Usage.PromptTokens
 		st.OutputTokens += out.Usage.CompletionTokens
+		st.CachedTokens += out.Usage.PromptTokensDetails.CachedTokens // P1
+		if out.Provider != "" && !slices.Contains(st.Providers, out.Provider) {
+			st.Providers = append(st.Providers, out.Provider)
+		}
 	}
 	return &out, nil
+}
+
+// stickTo is P2: later rounds of one call go to the provider that answered
+// the first, whose cache holds the shared prefix; others are the fallback,
+// cheapest first (P3).
+func stickTo(provider string) map[string]any {
+	if provider == "" {
+		return cheapestFirst
+	}
+	return map[string]any{"order": []string{provider}, "allow_fallbacks": true, "sort": "price", "quantizations": precisionFloor}
 }
 
 // firstLine is the start of s for logs.
