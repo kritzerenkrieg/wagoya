@@ -8,11 +8,14 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -918,33 +921,22 @@ func TestGolden(t *testing.T) {
 	if cfg.EmbedModel != "" && cfg.OpenRouterKey != "" {
 		e.vec = &memtools.Vectors{E: llm.NewOpenRouterEmbedder(cfg.OpenRouterKey, cfg.EmbedModel)}
 	}
-	failed := 0
-	for _, g := range cases() {
-		ok := t.Run(g.name, func(t *testing.T) {
-			var err error
-			n := tries[g.name]
-			if n == 0 {
-				n = 2
-			}
-			for try := 1; try <= n; try++ {
-				e.db = seeded(t)
-				if e.vec != nil {
-					if _, err := memtools.Embed(context.Background(), e.db, e.vec.E, 100); err != nil {
-						t.Fatalf("embed: %v", err)
-					}
+	// Cases run in parallel (each has its own store), at most goldenParallel
+	// at once to stay under provider rate limits.
+	var failed atomic.Int32
+	sem := make(chan struct{}, goldenParallel)
+	t.Run("cases", func(t *testing.T) {
+		for _, g := range cases() {
+			t.Run(g.name, func(t *testing.T) {
+				t.Parallel()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				if !runCase(t, e, g) {
+					failed.Add(1)
 				}
-				r := g.run(t, e)
-				if err = g.check(r); err == nil {
-					return
-				}
-				t.Logf("try %d: %v", try, err)
-			}
-			t.Error(err)
-		})
-		if !ok {
-			failed++
+			})
 		}
-	}
+	})
 	cost := 0.0
 	if cr, ok := c.(llm.CostReporter); ok {
 		cost += cr.Cost()
@@ -954,10 +946,44 @@ func TestGolden(t *testing.T) {
 			cost += cr.Cost()
 		}
 	}
-	t.Logf("golden set: %d cases, %d failed, cost $%.4f (budget $%.2f), model %s, embeddings %q", len(cases()), failed, cost, budget, cfg.Model, cfg.EmbedModel)
+	t.Logf("golden set: %d cases, %d failed, cost $%.4f (budget $%.2f), model %s, embeddings %q", len(cases()), failed.Load(), cost, budget, cfg.Model, cfg.EmbedModel)
 	if cost > budget {
 		t.Errorf("over budget: $%.4f > $%.2f", cost, budget)
 	}
+	// A full passing run lets deploy.sh skip the gate for this exact code.
+	if f := flag.Lookup("test.run"); !t.Failed() && (f == nil || f.Value.String() == "") {
+		if out, err := exec.Command("../../deploy/golden-stamp.sh").Output(); err == nil {
+			os.MkdirAll("../../dist", 0o755)
+			os.WriteFile("../../dist/.golden-pass", out, 0o644)
+		}
+	}
+}
+
+// goldenParallel is how many cases run at once.
+const goldenParallel = 6
+
+// runCase runs one case with its tries; it reports whether it passed.
+func runCase(t *testing.T, e env, g golden) bool {
+	var err error
+	n := tries[g.name]
+	if n == 0 {
+		n = 2
+	}
+	for try := 1; try <= n; try++ {
+		e.db = seeded(t)
+		if e.vec != nil {
+			if _, err := memtools.Embed(context.Background(), e.db, e.vec.E, 100); err != nil {
+				t.Fatalf("embed: %v", err)
+			}
+		}
+		r := g.run(t, e)
+		if err = g.check(r); err == nil {
+			return true
+		}
+		t.Logf("try %d: %v", try, err)
+	}
+	t.Error(err)
+	return false
 }
 
 // seeded opens a fresh store with people from "other chats" (J6 cases must

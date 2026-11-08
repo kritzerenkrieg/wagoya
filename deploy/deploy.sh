@@ -6,12 +6,21 @@ DIR=wagoya
 ARCH=${ARCH:-amd64} # C4: kritz is x86_64
 cd "$(dirname "$0")/.."
 go test ./...
-# J6: golden set against the real model (about $0.002 a run). Skip with SKIP_EVAL=1.
-if [ -z "${SKIP_EVAL:-}" ]; then
+# J6: golden set against the real model (about $0.004 a run). Skip with
+# SKIP_EVAL=1. Skipped on its own when a full run already passed on exactly
+# this code and model (deploy/golden-stamp.sh, written by the test).
+stamp=$(deploy/golden-stamp.sh)
+if [ -n "${SKIP_EVAL:-}" ]; then
+  echo 'golden set: skipped (SKIP_EVAL)'
+elif [ "$(cat dist/.golden-pass 2>/dev/null)" = "$stamp" ]; then
+  echo 'golden set: already passed on this code, skipped'
+else
+  echo 'golden set: running (about a minute)...'
   out=$(EVAL=1 go test ./internal/eval -count=1 -v 2>&1) && ok=1 || ok=
   grep -E -- '--- FAIL|golden set|try [0-9]' <<<"$out" || true
   [ -n "$ok" ] || { echo 'golden set failed: not deploying (SKIP_EVAL=1 to override)'; exit 1; }
 fi
+echo 'building...' 
 mkdir -p dist
 CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -trimpath -ldflags='-s -w' -o dist/wagoya .
 
@@ -31,7 +40,8 @@ ssh "$HOST" "set -e
 # silence and the next try resumes the partial file. The checksum must match
 # before anything is installed.
 for try in 1 2 3 4 5; do
-  rsync --partial --append-verify --timeout=30 dist/wagoya "$HOST:$DIR/wagoya.new" && break
+  echo "uploading (try $try)..."
+  rsync --compress --partial --append-verify --timeout=30 dist/wagoya "$HOST:$DIR/wagoya.new" && break
   [ "$try" = 5 ] && { echo 'upload failed 5 times: not deploying (old binary still running)'; exit 1; }
   echo "upload stalled, resuming ($try)"
 done
