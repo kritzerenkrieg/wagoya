@@ -142,6 +142,10 @@ func Open(path string, historyLimit int) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate messages: %w", err)
 	}
+	if err := migrateTasks(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate tasks: %w", err)
+	}
 	return &Store{db: db, historyLimit: historyLimit, now: time.Now}, nil
 }
 

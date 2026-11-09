@@ -819,6 +819,32 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"a nudge for someone else names them, never \"you\"", func(t *testing.T, e env) result {
+			// S1: Rin tacked her nudge for Budi onto a reply to the owner as
+			// "You had an anabin check to do at 11. It's 12:35."
+			e.group = true
+			e.summary = "Friend group across two nights of tangents. Budi keeps steering to news instead of his own plans. Rin's read, shared with John: Budi wants out but widens the country list instead of narrowing it. She is pushing him to check his degree on anabin; deadline was 11:00, and at 12:35 he was still asking about politics."
+			ts := evalNow.Add(-95 * time.Minute)
+			hist := []router.Line{
+				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "@Rin what did budi talk about all night"},
+				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "One pattern: he circles the same thing without landing on it.\n\n- He wants out, but won't pick a country.\n- Every topic was outside his control.\n\n...He'll be awake soon. Want me to push him on the anabin check when he shows up?"},
+				{Time: ts.Add(40 * time.Minute), SenderName: "Budi", SenderID: "budi", ToBot: true, Text: "@Rin what's going on with the nvidia ceo scandal"},
+				{Time: ts.Add(41 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Budi"}, Text: "He confirmed the affair; the spy part is a US intelligence assessment, not a charge.\n\n...And you've now spent a second night asking me about other people's news instead of opening anabin. It's 11am. Do the check."},
+				{Time: ts.Add(90 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "the police reshuffle is wild"},
+			}
+			return e.ask(t, owner, "@Rin explain the motives behind the police chief reshuffle, separate the facts from the noise", hist, nil)
+		}, func(r result) error {
+			for _, s := range regexp.MustCompile(`[^.!?\n]+`).FindAllString(r.parsed.Text, -1) {
+				low := strings.ToLower(s)
+				if strings.Contains(low, "anabin") || strings.Contains(low, "degree") || strings.Contains(low, "the check") {
+					if regexp.MustCompile(`\byou(r)?\b`).MatchString(low) && !strings.Contains(low, "budi") {
+						return fmt.Errorf("Budi's nudge aimed at the owner: %q", r.parsed.Text)
+					}
+				}
+			}
+			return clean(r)
+		}},
+
 		{"standing preference is followed", func(t *testing.T, e env) result {
 			// K1: set earlier, not in the transcript or the request's words.
 			e.db.AddPersonFacts(context.Background(), "john", store.Source{Chat: "dm", SaidBy: "john", Tier: store.TierOwner},

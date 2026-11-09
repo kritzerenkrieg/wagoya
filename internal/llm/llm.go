@@ -332,6 +332,7 @@ type CLIResult struct {
 // PermissionDenial is a tool call Claude Code refused to run.
 type PermissionDenial struct {
 	ToolName  string          `json:"tool_name"`
+	ToolUseID string          `json:"tool_use_id"`
 	ToolInput json.RawMessage `json:"tool_input"`
 }
 

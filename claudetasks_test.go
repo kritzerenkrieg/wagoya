@@ -67,3 +67,72 @@ func TestTaskMessage(t *testing.T) {
 		t.Fatalf("dm question = %q", got)
 	}
 }
+
+// TestApprovalCommands: the runner posts a live prompt and polls for the
+// owner's answer over `wagoya task ask/answer` (R4).
+func TestApprovalCommands(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	cmd := func(stdin string, args ...string) (string, error) {
+		var out bytes.Buffer
+		err := runTaskCommand(ctx, db, args, strings.NewReader(stdin), &out)
+		return strings.TrimSpace(out.String()), err
+	}
+	id, _ := db.AddTask(ctx, store.Task{Chat: "c@s.whatsapp.net", Requester: "john", Text: "Build", Repo: "rvm"})
+	if _, err := cmd("Run `make`", "ask", "1"); err == nil {
+		t.Fatal("asked on a queued task")
+	}
+	cmd("", "claim", "rvm")
+	if _, err := cmd("Run `make`\n", "ask", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := cmd("", "answer", "1"); out != "pending" {
+		t.Fatalf("answer = %q", out)
+	}
+	db.MarkAnnounced(ctx, id)
+	db.AnswerApproval(ctx, id, false)
+	if out, _ := cmd("", "answer", "1"); out != "deny" {
+		t.Fatalf("answer = %q", out)
+	}
+	db.CancelTask(ctx, id)
+	if out, _ := cmd("", "answer", "1"); out != "deny" {
+		t.Fatalf("answer after cancel = %q", out)
+	}
+}
+
+func TestApprovalWord(t *testing.T) {
+	for in, want := range map[string]int{ // 1 allow, 0 deny, -1 not an answer
+		"yes": 1, "Yes.": 1, " OK! ": 1, "y": 1, "allow": 1, "okay": 1,
+		"no": 0, "No.": 0, "n": 0, "deny": 0,
+		"yes but wait": -1, "what is cmake?": -1, "sure": -1, "": -1, "yess": -1,
+	} {
+		allow, ok := approvalWord(in)
+		got := -1
+		if ok && allow {
+			got = 1
+		} else if ok {
+			got = 0
+		}
+		if got != want {
+			t.Errorf("approvalWord(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestTaskMessageApprovals(t *testing.T) {
+	for _, st := range []store.Task{
+		{ID: 1, Chat: "c@s.whatsapp.net", Status: store.TaskRunning, Approval: "Run `make`"},
+		{ID: 2, Chat: "c@s.whatsapp.net", Status: store.TaskNeedsApproval, Approval: "- Run `make`"},
+	} {
+		if got := taskMessage(st, "x"); !strings.HasPrefix(got, memtools.MarkQuestion+"\n") {
+			t.Errorf("#%d message = %q", st.ID, got)
+		}
+	}
+	if got := taskMessage(store.Task{ID: 3, Chat: "c@s.whatsapp.net", Status: store.TaskDone}, "x"); !strings.HasPrefix(got, memtools.MarkCompleted+"\n") {
+		t.Errorf("done message = %q", got)
+	}
+}

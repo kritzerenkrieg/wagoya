@@ -3,6 +3,7 @@ package memtools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,18 +95,56 @@ func TestClaudeTools(t *testing.T) {
 	if task, _, _ = db.TaskByID(ctx, 1); task.OwnerText != "tell it sqlite" || task.Text != "tell it sqlite" || task.Status != store.TaskQueued {
 		t.Fatalf("answered task = %+v", task)
 	}
-	if out := run(newTurn(owner), "claude_tasks", `{}`); !strings.Contains(out, "#1 [queued] tell it sqlite") || !strings.Contains(out, "#3 [queued] Task three") {
+	if out := run(newTurn(owner), "claude_tasks", `{}`); !strings.Contains(out, "#1 [queued] tell it sqlite") || !strings.Contains(out, "#3 [queued] Task three") || !strings.Contains(out, "Repos on the laptop: wagoya, site.") {
 		t.Fatalf("list = %q", out)
 	}
 	if out := run(newTurn(owner), "cancel_claude_task", `{"task_id":2}`); out != "cancelled #2" {
 		t.Fatalf("cancel = %q", out)
 	}
-}
-
-func TestWithMarker(t *testing.T) {
-	for _, in := range []string{"Queued as #3.", MarkInitiated + "\nQueued as #3.", "  " + MarkInitiated + " Queued as #3."} {
-		if got := WithMarker(MarkInitiated, in); got != MarkInitiated+"\nQueued as #3." {
-			t.Errorf("WithMarker(%q) = %q", in, got)
+	// Q1: a new project, by another owner (John is at the limit).
+	ana := newTurn(router.Line{SenderID: "ana", SenderName: "Ana", Whitelisted: true, Text: "@Rin have Claude start a new project called notes"})
+	for in, want := range map[string]string{
+		`{"task":"Start a notes app","repo":"wagoya","new_repo":true}`: "already exists",
+		`{"task":"Start a notes app","repo":"../x","new_repo":true}`:   "folder name",
+		`{"task":"Start a notes app","new_repo":true}`:                 "folder name",
+		`{"task":"Start a notes app","repo":"notes"}`:                  "set new_repo",
+	} {
+		if out := run(ana, "ask_claude_code", in); !strings.Contains(out, want) {
+			t.Errorf("%s = %q, want %q", in, out, want)
 		}
+	}
+	out = run(ana, "ask_claude_code", `{"task":"Start a notes app","repo":"notes","new_repo":true}`)
+	if !strings.HasPrefix(out, "queued as #4") {
+		t.Fatalf("new repo = %q", out)
+	}
+	if task, _, _ = db.TaskByID(ctx, 4); task.Repo != "notes" || !task.NewRepo {
+		t.Fatalf("new repo task = %+v", task)
+	}
+	// A follow-up works in the repo the parent made, without making it again.
+	id, err := db.AddTask(ctx, store.Task{Chat: "g", Requester: "ana", Text: "Add a README", FollowUpOf: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task, _, _ = db.TaskByID(ctx, id); task.Repo != "notes" || task.NewRepo {
+		t.Fatalf("follow-up of a new repo = %+v", task)
+	}
+
+	// R3: one task's full report, only for its owner.
+	full := strings.Repeat("finding ", 80) + "END"
+	rid, _ := db.AddTask(ctx, store.Task{Chat: "g", Requester: "ana", Text: "Report the status", Repo: "wagoya"})
+	for i := 0; i < 10; i++ {
+		if c, ok, _ := db.ClaimTask(ctx, nil); !ok || c.Task.ID == rid {
+			break
+		}
+	}
+	db.FinishTask(ctx, rid, store.Report{Status: store.TaskDone, Result: full})
+	if out := run(ana, "claude_tasks", fmt.Sprintf(`{"task_id":%d}`, rid)); !strings.Contains(out, "full report:\n"+full) {
+		t.Fatalf("full report = %q", out)
+	}
+	if out := run(ana, "claude_tasks", `{}`); strings.Contains(out, "END") {
+		t.Fatal("the list isn't clipped")
+	}
+	if out := run(newTurn(owner), "claude_tasks", fmt.Sprintf(`{"task_id":%d}`, rid)); strings.Contains(out, "END") {
+		t.Fatalf("another owner's report = %q", out)
 	}
 }

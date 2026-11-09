@@ -43,7 +43,7 @@ A WhatsApp number backed by Claude that the user can DM and add to groups (A1).
 | Rate limits | `internal/ratelimit` | Global 3 s message pacing with queue (B18); per-chat denial cooldown (B14) | in-memory |
 | LLM | `internal/llm` | One stateless request, text + optional image (B6, B8); refusals passed through (B13) | `data/claude-work/` (CLI cwd) |
 | Config | `internal/config` | `.env` loading and validation | — |
-| Claude Code tasks | `claudetasks.go`, `internal/memtools/claude.go`, `cmd/claude-runner` | Owner-only task queue (O1); `wagoya task claim/status/done` for the laptop runner over SSH (O2); announcing results with the fixed markers (O5). The runner runs Claude Code in a worktree on `claude/task-N` and pushes only that branch on request (O3) | `data/bot.db` `claude_tasks`; laptop worktrees |
+| Claude Code tasks | `claudetasks.go`, `internal/memtools/claude.go`, `cmd/claude-runner` | Owner-only task queue (O1); `wagoya task claim/status/done` for the laptop runner over SSH (O2); announcing results with the fixed markers (O5). The runner runs Claude Code in the repo itself (R5) and relays its permission prompts to the owner (R1, R4: `wagoya task ask/answer`, the runner's `approve-mcp` permission tool) | `data/bot.db` `claude_tasks` |
 
 Each triggered request runs in its own goroutine, serialised per chat.
 
@@ -60,9 +60,9 @@ Each triggered request runs in its own goroutine, serialised per chat.
 
 **Claude Code task** (owners only, O1-O5)
 1. An owner asks Rin; she calls `ask_claude_code`. The task is stored with the owner's own message; the reply gets `[Orchestration Initiated]` from the server.
-2. The laptop runner claims it over SSH, makes a worktree on `claude/task-N`, runs `claude -p` with restricted tools, heartbeats every 30 s (a cancel stops it), and reports the result, commits and diff stat.
-3. Every 15 s the bot expires stale tasks and announces new statuses: one curator-model call writes Rin's message (template fallback), the server adds `[Orchestration Completed]` or `[Orchestration Question]` and tags the owner in groups.
-4. An answer or follow-up resumes the same Claude Code session; `push_claude_branch` queues a push of that branch only.
+2. The laptop runner claims it over SSH and runs `claude -p` in the repo's folder in `auto` mode, with its own `approve-mcp` binary as the `--permission-prompt-tool`. Each permission prompt goes to the bot (`task ask`); the runner polls `task answer` until the owner's yes or no. It heartbeats every 30 s (a cancel stops it) and reports the result, commits and diff stat; actions the classifier refused come back as `needs_approval`.
+3. Every 15 s the bot expires stale tasks and announces new statuses: Claude Code's report plus one curator-model outro (R2), or a fixed prompt for a request to allow (R4); the server adds `[Orchestration Completed]` or `[Orchestration Question]` and tags the owner in groups. The owner's yes or no to a prompt is read by the server before the model sees the message.
+4. An answer, a follow-up or a yes to blocked actions resumes the same Claude Code session; `push_claude_branch` pushes an older task's `claude/task-N` branch only.
 
 **DM**: whitelisted → same as a triggered message, no prefix needed (B4). Otherwise → fixed denial text, nothing stored (B7, B14).
 

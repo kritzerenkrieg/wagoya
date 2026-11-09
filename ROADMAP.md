@@ -163,6 +163,28 @@ flowchart LR
 
 - [ ] Cache-friendly harness (P1-P6). Done when: router, store and llm tests cover the order, stable handles, block window and provider pinning; the golden set passes; and live, a day of cost lines shows most reply prompt tokens cached, with the cost per reply compared to the 2026-11-06..08 baseline ($0.0030).
 
+## Phase Q: Claude Code projects
+
+**Goal:** Claude Code tasks reach any project on the laptop, including new ones.
+**Exit:** renaming or adding a folder needs no config change, and an owner can start a new project from WhatsApp.
+
+- [ ] Repos by projects roots; new projects (Q1). Done when: runner tests cover finding repos under both roots, config defaults, and a `new_repo` task creating the repo and running in it (a missing repo without it fails); memtools tests cover `new_repo` checks and follow-ups; the store migration test passes; and live, the runner reports repos from `~/Projects` and `~/Programs`, and a "start a new project" task ends as a commit on `claude/task-N` in the new folder.
+
+## Phase R: Claude Code as the owner runs it
+
+**Goal:** a task can do what Claude Code could do in the owner's own session, with the owner confirming each permission from WhatsApp, and the result arrives in full.
+**Exit:** a task in a non-Go repo builds and runs it after the owner answers its prompts with yes, and the completion message carries Claude Code's report.
+
+- [ ] Unrestricted tasks with relayed prompts (R1, R4-R6). Done when: runner tests cover the MCP permission tool, the approver (allow, deny, cancel), runs in the repo itself, blocked actions turning into a request and a yes resuming with exactly those rules, and the working-time limit; store and `wagoya task ask/answer` tests cover live prompts and blocked actions, including expiry; the strict-word test passes; and live, a task in `rvm_gui` asks for `cmake` in WhatsApp, a "yes" lets it build, and a "no" is reported as denied.
+- [ ] Full report and detail on demand (R2, R3). Done when: router tests cover the report body, WhatsApp conversion and clipping; memtools tests cover `claude_tasks` with `task_id`; and live, a finished task's message shows Claude Code's own summary with Rin's line last.
+
+## Phase S: Addressing and attribution
+
+**Goal:** Rin's lines reach the person they are meant for, and the summary keeps her suggestions apart from people's own commitments.
+**Exit:** no nudge for one member lands on another as "you".
+
+- [ ] Nudges aimed at the right person; agreed deadlines only (S1, S2). Done when: the golden case "a nudge for someone else names them, never "you"" passes with the rest of the golden set; and live, a day of group chat has no nudge addressed to the wrong person.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

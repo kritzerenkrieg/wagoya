@@ -144,3 +144,121 @@ func TestExpireTasks(t *testing.T) {
 		t.Fatalf("queued expiry = %+v", got)
 	}
 }
+
+// TestMigrateTasks: a database from before Q1 gets new_repo, and old rows
+// read as not new.
+func TestMigrateTasks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bot.db")
+	s, err := Open(path, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := s.db.Exec(`ALTER TABLE claude_tasks DROP COLUMN new_repo`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO claude_tasks(chat, requester, requester_name, owner_text, task, repo, status, created, updated)
+		VALUES ('g','john','John','x','old task','wagoya','done',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if s, err = Open(path, 16); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	task, ok, err := s.TaskByID(ctx, 1)
+	if err != nil || !ok || task.NewRepo || task.Repo != "wagoya" {
+		t.Fatalf("old task = %+v %v %v", task, ok, err)
+	}
+	id, _ := s.AddTask(ctx, Task{Chat: "g", Requester: "ana", Text: "new", Repo: "notes", NewRepo: true})
+	if task, _, _ = s.TaskByID(ctx, id); !task.NewRepo {
+		t.Fatalf("new task = %+v", task)
+	}
+}
+
+// TestApprovals: a live prompt waits for the owner's answer, and blocked
+// actions resume with their rules on a yes or end the task on a no (R4).
+func TestApprovals(t *testing.T) {
+	s, now := taskStore(t)
+	ctx := context.Background()
+	id, _ := s.AddTask(ctx, Task{Chat: "c", Requester: "own", OwnerText: "build it", Text: "Build it", Repo: "rvm"})
+	s.ClaimTask(ctx, nil)
+
+	// Live prompt: not answerable until announced, then taken once.
+	if err := s.AskApproval(ctx, id, "Bash: cmake -S . -B build"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.PendingApproval(ctx, "c", "own"); ok {
+		t.Fatal("pending before it was announced")
+	}
+	if ts, _ := s.Unannounced(ctx); len(ts) != 1 || ts[0].Approval == "" || ts[0].Status != TaskRunning {
+		t.Fatalf("unannounced = %+v", ts)
+	}
+	s.MarkAnnounced(ctx, id)
+	if p, ok, _ := s.PendingApproval(ctx, "c", "own"); !ok || p.ID != id {
+		t.Fatalf("pending = %+v %v", p, ok)
+	}
+	if _, ok, _ := s.PendingApproval(ctx, "c", "someone else"); ok {
+		t.Fatal("another person's approval")
+	}
+	if a, _ := s.TakeApproval(ctx, id); a != "pending" {
+		t.Fatalf("take before answer = %q", a)
+	}
+	if err := s.AnswerApproval(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.PendingApproval(ctx, "c", "own"); ok {
+		t.Fatal("still pending after the answer")
+	}
+	if a, _ := s.TakeApproval(ctx, id); a != "allow" {
+		t.Fatalf("take = %q", a)
+	}
+	if a, _ := s.TakeApproval(ctx, id); a != "pending" {
+		t.Fatalf("answer taken twice: %q", a)
+	}
+	if err := s.AnswerApproval(ctx, id, true); err == nil {
+		t.Fatal("answered with nothing asked")
+	}
+
+	// Blocked actions at the end of a run: yes resumes with the rules.
+	if err := s.FinishTask(ctx, id, Report{Status: TaskNeedsApproval, SessionID: "sess", Result: "Found the build.",
+		Approval: "- Bash: cmake -S . -B build", ApprovalRules: []string{"Bash(cmake -S . -B build)"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.MarkAnnounced(ctx, id)
+	if p, ok, _ := s.PendingApproval(ctx, "c", "own"); !ok || p.Status != TaskNeedsApproval || len(p.ApprovalRules) != 1 {
+		t.Fatalf("pending blocked = %+v %v", p, ok)
+	}
+	if err := s.AnswerApproval(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	c, ok, _ := s.ClaimTask(ctx, nil)
+	if !ok || c.Action != "resume" || c.Task.ApprovalAnswer != "allow" || c.Task.ApprovalRules[0] != "Bash(cmake -S . -B build)" {
+		t.Fatalf("resume claim = %+v", c)
+	}
+	if task, _, _ := s.TaskByID(ctx, id); task.Approval != "" || task.ApprovalRules != nil {
+		t.Fatalf("approval not cleared on claim: %+v", task)
+	}
+
+	// No: the task ends as done, with its report.
+	s.FinishTask(ctx, id, Report{Status: TaskNeedsApproval, Approval: "- Bash: git push", ApprovalRules: []string{"Bash(git push)"}})
+	if err := s.AnswerApproval(ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if task, _, _ := s.TaskByID(ctx, id); task.Status != TaskDone || task.Result != "Found the build." || task.Approval != "" {
+		t.Fatalf("denied = %+v", task)
+	}
+	if err := s.FinishTask(ctx, id, Report{Status: TaskNeedsApproval}); err == nil {
+		t.Fatal("needs_approval without an approval accepted")
+	}
+
+	// Unanswered for 24 hours: failed.
+	id2, _ := s.AddTask(ctx, Task{Chat: "c", Requester: "own", Text: "Other", Repo: "rvm"})
+	s.ClaimTask(ctx, nil)
+	s.FinishTask(ctx, id2, Report{Status: TaskNeedsApproval, Approval: "- Bash: x", ApprovalRules: []string{"Bash(x)"}})
+	*now = now.Add(25 * time.Hour)
+	s.ExpireTasks(ctx)
+	if task, _, _ := s.TaskByID(ctx, id2); task.Status != TaskFailed {
+		t.Fatalf("expired = %+v", task)
+	}
+}

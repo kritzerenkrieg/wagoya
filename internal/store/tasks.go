@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -29,7 +30,11 @@ CREATE TABLE IF NOT EXISTS claude_tasks (
 	result         TEXT NOT NULL DEFAULT '',
 	created        INTEGER NOT NULL,
 	updated        INTEGER NOT NULL,
-	announced      INTEGER NOT NULL DEFAULT 1
+	announced      INTEGER NOT NULL DEFAULT 1,
+	new_repo       INTEGER NOT NULL DEFAULT 0, -- Q1: the runner creates the repo
+	approval       TEXT NOT NULL DEFAULT '', -- R4: what Claude Code asks the owner to allow
+	approval_rules TEXT NOT NULL DEFAULT '', -- R4: JSON list of rules allowed on resume
+	approval_answer TEXT NOT NULL DEFAULT '' -- R4: "", "allow" or "deny"
 );
 CREATE INDEX IF NOT EXISTS claude_tasks_status ON claude_tasks(status, updated);`
 
@@ -38,6 +43,7 @@ const (
 	TaskQueued        = "queued"
 	TaskRunning       = "running"
 	TaskNeedsInput    = "needs_input"
+	TaskNeedsApproval = "needs_approval" // R4: blocked actions wait for the owner's yes or no
 	TaskDone          = "done"
 	TaskFailed        = "failed"
 	TaskCancelled     = "cancelled"
@@ -58,7 +64,7 @@ const (
 )
 
 // openStatuses still have work ahead.
-var openStatuses = []string{TaskQueued, TaskRunning, TaskNeedsInput, TaskPushRequested, TaskPushing}
+var openStatuses = []string{TaskQueued, TaskRunning, TaskNeedsInput, TaskNeedsApproval, TaskPushRequested, TaskPushing}
 
 // Task is one Claude Code task.
 type Task struct {
@@ -69,9 +75,15 @@ type Task struct {
 	SessionID, Branch, Question, Result string
 	Created, Updated                    time.Time
 	Announced                           bool
+	NewRepo                             bool // Q1: the runner creates Repo if it isn't there
+	// R4: a request for the owner's yes or no. While running, Approval is a
+	// live prompt the runner waits on; in needs_approval, the actions Claude
+	// Code was blocked from, with ApprovalRules to allow on resume.
+	Approval, ApprovalAnswer string
+	ApprovalRules            []string
 }
 
-const taskCols = `id, chat, requester, requester_name, owner_text, task, repo, status, follow_up_of, session_id, branch, question, result, created, updated, announced`
+const taskCols = `id, chat, requester, requester_name, owner_text, task, repo, status, follow_up_of, session_id, branch, question, result, created, updated, announced, new_repo, approval, approval_rules, approval_answer`
 
 func scanTasks(rows *sql.Rows) ([]Task, error) {
 	defer rows.Close()
@@ -79,9 +91,14 @@ func scanTasks(rows *sql.Rows) ([]Task, error) {
 	for rows.Next() {
 		var t Task
 		var c, u int64
+		var rules string
 		if err := rows.Scan(&t.ID, &t.Chat, &t.Requester, &t.RequesterName, &t.OwnerText, &t.Text, &t.Repo, &t.Status,
-			&t.FollowUpOf, &t.SessionID, &t.Branch, &t.Question, &t.Result, &c, &u, &t.Announced); err != nil {
+			&t.FollowUpOf, &t.SessionID, &t.Branch, &t.Question, &t.Result, &c, &u, &t.Announced, &t.NewRepo,
+			&t.Approval, &rules, &t.ApprovalAnswer); err != nil {
 			return nil, err
+		}
+		if rules != "" {
+			json.Unmarshal([]byte(rules), &t.ApprovalRules)
 		}
 		t.Created, t.Updated = time.Unix(c, 0), time.Unix(u, 0)
 		out = append(out, t)
@@ -126,13 +143,13 @@ func (s *Store) AddTask(ctx context.Context, t Task) (int64, error) {
 		if !ok {
 			return 0, fmt.Errorf("no task #%d", t.FollowUpOf)
 		}
-		t.Repo, t.Branch = p.Repo, p.Branch
+		t.Repo, t.Branch, t.NewRepo = p.Repo, p.Branch, false
 		if s.now().Sub(p.Updated) < FreshSessionAt {
 			t.SessionID = p.SessionID // older sessions may be gone from the laptop
 		}
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO claude_tasks(chat, requester, requester_name, owner_text, task, repo, status, follow_up_of, session_id, branch, created, updated)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, t.Chat, t.Requester, t.RequesterName, t.OwnerText, t.Text, t.Repo, TaskQueued, t.FollowUpOf, t.SessionID, t.Branch, now, now)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO claude_tasks(chat, requester, requester_name, owner_text, task, repo, status, follow_up_of, session_id, branch, created, updated, new_repo)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, t.Chat, t.Requester, t.RequesterName, t.OwnerText, t.Text, t.Repo, TaskQueued, t.FollowUpOf, t.SessionID, t.Branch, now, now, t.NewRepo)
 	if err != nil {
 		return 0, err
 	}
@@ -155,7 +172,7 @@ func (s *Store) RequestPush(ctx context.Context, id int64) error {
 // CancelTask cancels a task that hasn't finished. A running one is stopped
 // by the runner when it next checks the status.
 func (s *Store) CancelTask(ctx context.Context, id int64) error {
-	return s.move(ctx, id, []string{TaskQueued, TaskRunning, TaskNeedsInput, TaskPushRequested}, TaskCancelled, ``)
+	return s.move(ctx, id, []string{TaskQueued, TaskRunning, TaskNeedsInput, TaskNeedsApproval, TaskPushRequested}, TaskCancelled, ``)
 }
 
 // move changes a task's status if it is in one of from, with extra SET
@@ -221,7 +238,7 @@ func (s *Store) ClaimTask(ctx context.Context, repos []string) (Claim, bool, err
 		tx.QueryRowContext(ctx, `SELECT result FROM claude_tasks WHERE id = ?`, t.FollowUpOf).Scan(&r)
 		c.Context = r
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE claude_tasks SET status = ?, updated = ? WHERE id = ?`, next, now.Unix(), t.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE claude_tasks SET status = ?, updated = ?, approval = '', approval_rules = '', approval_answer = '' WHERE id = ?`, next, now.Unix(), t.ID); err != nil {
 		return Claim{}, false, err
 	}
 	c.Task.Status = next
@@ -248,22 +265,38 @@ type Report struct {
 	Branch    string `json:"branch"`
 	Question  string `json:"question"`
 	Result    string `json:"result"` // summary, commits, diff stat, refused actions
+	// R4: with status needs_approval, what was blocked and the rules that
+	// allow it when the owner says yes.
+	Approval      string   `json:"approval,omitempty"`
+	ApprovalRules []string `json:"approval_rules,omitempty"`
 }
 
 // FinishTask records a report on a running or pushing task and marks it for
 // announcing. A cancelled task stays cancelled.
 func (s *Store) FinishTask(ctx context.Context, id int64, r Report) error {
 	switch r.Status {
-	case TaskDone, TaskFailed, TaskNeedsInput, TaskPushed, TaskPushFailed:
+	case TaskDone, TaskFailed, TaskNeedsInput, TaskNeedsApproval, TaskPushed, TaskPushFailed:
 	default:
 		return fmt.Errorf("bad status %q", r.Status)
+	}
+	if r.Status == TaskNeedsApproval && strings.TrimSpace(r.Approval) == "" {
+		return errors.New("needs_approval without an approval")
+	}
+	rules := ""
+	if r.Status == TaskNeedsApproval && len(r.ApprovalRules) > 0 {
+		b, _ := json.Marshal(r.ApprovalRules)
+		rules = string(b)
+	} else {
+		r.Approval = ""
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE claude_tasks SET status = ?, updated = ?, announced = 0,
 		session_id = CASE WHEN ? != '' THEN ? ELSE session_id END,
 		branch = CASE WHEN ? != '' THEN ? ELSE branch END,
-		question = ?, result = CASE WHEN ? != '' THEN ? ELSE result END
+		question = ?, result = CASE WHEN ? != '' THEN ? ELSE result END,
+		approval = ?, approval_rules = ?, approval_answer = ''
 		WHERE id = ? AND status IN (?, ?)`,
-		r.Status, s.now().Unix(), r.SessionID, r.SessionID, r.Branch, r.Branch, r.Question, r.Result, r.Result, id, TaskRunning, TaskPushing)
+		r.Status, s.now().Unix(), r.SessionID, r.SessionID, r.Branch, r.Branch, r.Question, r.Result, r.Result,
+		r.Approval, rules, id, TaskRunning, TaskPushing)
 	if err != nil {
 		return err
 	}
@@ -284,6 +317,7 @@ func (s *Store) ExpireTasks(ctx context.Context) (int64, error) {
 	}{
 		{TaskQueued, TaskFailed, "Never ran: the laptop runner didn't pick it up within 24 hours.", TaskQueueTTL},
 		{TaskNeedsInput, TaskFailed, "Stopped: the question got no answer within 24 hours.", TaskQueueTTL},
+		{TaskNeedsApproval, TaskFailed, "Stopped: the request to allow blocked actions got no answer within 24 hours.", TaskQueueTTL},
 		{TaskRunning, TaskFailed, "Stopped: the laptop runner went quiet in the middle of the task.", TaskHeartbeat},
 		{TaskPushRequested, TaskPushFailed, "Push never ran: the laptop runner didn't pick it up within 24 hours.", TaskQueueTTL},
 		{TaskPushing, TaskPushFailed, "Push didn't report back from the laptop.", TaskPushTTL},
@@ -336,4 +370,102 @@ func anys(ss []string) []any {
 		out[i] = s
 	}
 	return out
+}
+
+// migrateTasks adds columns that older databases lack (Q1, R4).
+func migrateTasks(db *sql.DB) error {
+	for _, c := range [][2]string{
+		{"new_repo", "INTEGER NOT NULL DEFAULT 0"},
+		{"approval", "TEXT NOT NULL DEFAULT ''"},
+		{"approval_rules", "TEXT NOT NULL DEFAULT ''"},
+		{"approval_answer", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('claude_tasks') WHERE name = ?`, c[0]).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE claude_tasks ADD COLUMN ` + c[0] + ` ` + c[1]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// AskApproval posts a live prompt from a running task for the owner (R4)
+// and marks it for announcing. Any earlier answer is dropped.
+func (s *Store) AskApproval(ctx context.Context, id int64, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return errors.New("empty approval request")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE claude_tasks SET approval = ?, approval_answer = '', announced = 0, updated = ?
+		WHERE id = ? AND status = ?`, text, s.now().Unix(), id, TaskRunning)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("task #%d is not running", id)
+	}
+	return nil
+}
+
+// TakeApproval is the runner's poll for a live prompt's answer (R4): "allow"
+// or "deny" once the owner answered, clearing the prompt, else "pending".
+// It is also a heartbeat, and a cancelled task reads as a deny.
+func (s *Store) TakeApproval(ctx context.Context, id int64) (string, error) {
+	st, err := s.Heartbeat(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if st != TaskRunning {
+		return "deny", nil
+	}
+	t, _, err := s.TaskByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if t.ApprovalAnswer == "" {
+		return "pending", nil
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE claude_tasks SET approval = '', approval_answer = '' WHERE id = ?`, id)
+	return t.ApprovalAnswer, err
+}
+
+// PendingApproval is requester's task in chat waiting on a yes or no (R4):
+// a live prompt that has been announced, or blocked actions.
+func (s *Store) PendingApproval(ctx context.Context, chat, requester string) (Task, bool, error) {
+	ts, err := s.tasks(ctx, `WHERE chat = ? AND requester = ? AND approval != '' AND approval_answer = ''
+		AND ((status = ? AND announced = 1) OR status = ?) ORDER BY updated DESC LIMIT 1`, chat, requester, TaskRunning, TaskNeedsApproval)
+	if err != nil || len(ts) == 0 {
+		return Task{}, false, err
+	}
+	return ts[0], true, nil
+}
+
+// AnswerApproval records the owner's yes or no (R4). A live prompt gets the
+// answer for the runner to take; blocked actions go back to the queue to
+// resume with their rules allowed, or, on a no, the task ends as done.
+func (s *Store) AnswerApproval(ctx context.Context, id int64, allow bool) error {
+	ans := "deny"
+	if allow {
+		ans = "allow"
+	}
+	t, ok, err := s.TaskByID(ctx, id)
+	switch {
+	case err != nil:
+		return err
+	case !ok:
+		return fmt.Errorf("no task #%d", id)
+	case t.Approval == "" || t.ApprovalAnswer != "":
+		return fmt.Errorf("task #%d has nothing waiting on an answer", id)
+	case t.Status == TaskRunning:
+		_, err = s.db.ExecContext(ctx, `UPDATE claude_tasks SET approval_answer = ? WHERE id = ? AND status = ?`, ans, id, TaskRunning)
+		return err
+	case t.Status == TaskNeedsApproval && allow:
+		return s.move(ctx, id, []string{TaskNeedsApproval}, TaskQueued, `approval_answer = 'allow'`)
+	case t.Status == TaskNeedsApproval:
+		return s.move(ctx, id, []string{TaskNeedsApproval}, TaskDone, `approval = '', approval_rules = '', approval_answer = ''`)
+	}
+	return fmt.Errorf("task #%d is %s", id, strings.ReplaceAll(t.Status, "_", " "))
 }

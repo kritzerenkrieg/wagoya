@@ -513,6 +513,9 @@ func (b *bot) onMessage(e *events.Message) {
 		log.Printf("store message: %v", err)
 	}
 	b.noteMessage(chatKey)
+	if wl && key != "" && img == nil && b.handleApproval(ctx, chat, e, key, text, qText) {
+		return // R4: an owner's yes or no to Claude Code, read by the server
+	}
 	summary, err := b.db.Summary(ctx, chatKey) // J8
 	if err != nil {
 		log.Printf("summary: %v", err)

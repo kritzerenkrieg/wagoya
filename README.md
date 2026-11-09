@@ -52,14 +52,15 @@ wagoya remembers people, not just conversations.
 Owners can ask Rin to get coding work done ("have Claude Code add X to wagoya"). Claude Code runs on the owner's laptop with their own login, not on the server:
 
 - **Queue:** Rin's owner-only tools queue a task in `bot.db`, with the owner's own words. Her reply starts with `[Orchestration Initiated]`.
-- **Runner:** `cmd/claude-runner` on the laptop polls the queue over SSH (`wagoya task claim`), runs Claude Code in a git worktree on `claude/task-N`, and reports back. Claude Code may edit files, build, test and commit; anything else is refused and listed.
-- **Results:** Rin posts `[Orchestration Completed]` with what changed, the branch and the diff stat. A question from Claude Code comes as `[Orchestration Question]`; the owner's answer resumes the same session. Follow-ups ("also add a test for #3") continue it too.
-- **Pushing:** only the task's branch, only when an owner asks Rin. Merging and deploying stay manual.
+- **Runner:** `cmd/claude-runner` on the laptop polls the queue over SSH (`wagoya task claim`), runs Claude Code in the repo's own folder, on whatever branch is checked out (R5), and reports back. Repos are the git checkouts directly under `roots`, found on every poll; an owner can also ask for a new project, which the runner creates in the first root (Q1).
+- **Permissions:** no limits of the runner's own (R1). Claude Code runs in `auto` mode with the owner's own settings (R6), and anything it needs permission for is posted as `[Orchestration Question]`: "Claude Code wants to do this… Reply *yes* to allow or *no* to deny." The server reads the owner's yes or no itself (R4). Actions the auto classifier refused are asked about at the end of the run, and a yes resumes the session with exactly those allowed. Waiting doesn't count toward the 30-minute limit.
+- **Results:** `[Orchestration Completed]` with Claude Code's own report (up to about 3,000 characters, R2), the commits and diff stat, then a line from Rin. She can fetch any task's full report (R3). A question from Claude Code comes as `[Orchestration Question]`; the owner's answer resumes the same session. Follow-ups ("also add a test for #3") continue it too.
+- **Pushing:** Claude Code can push, merge or deploy like anything else, if the owner allows it in a prompt. `push_claude_branch` remains for older tasks that have a `claude/task-N` branch.
 
 ```sh
 go build -o ~/.local/bin/claude-runner ./cmd/claude-runner
 cat > ~/.config/wagoya-runner.json <<'JSON'
-{"host": "kritz", "remote": "~/wagoya/wagoya", "repos": {"wagoya": "/path/to/wa-claude-bot"}}
+{"host": "kritz", "remote": "~/wagoya/wagoya", "roots": ["~/Projects", "~/Programs"]}
 JSON
 claude-runner            # or: systemctl --user enable --now claude-runner (deploy/claude-runner.service)
 ```
