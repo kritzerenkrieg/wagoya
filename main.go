@@ -1051,15 +1051,144 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 			log.Printf("scheduler: job %d: bad chat", j.ID)
 			continue
 		}
-		// L10: pinned "@{key}" tags become real mentions now.
-		out, stored, mentions := router.ExpandMentions(j.Text, b.nameOf(ctx))
-		sentID := b.sendMentions(ctx, chat, out, nil, mentionJIDs(mentions))
-		log.Printf("scheduler: sent job %d (%d mentions)", j.ID, len(mentions))
-		if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID,
-			To: b.mentionNames(ctx, mentions, "")}); err != nil { // K7
-			log.Printf("scheduler: store: %v", err)
+		b.sendJob(ctx, j, chat)
+	}
+}
+
+// sendJob writes a due job's message now, from its brief and the chat's
+// current context (T1), and sends it; on a model error, an empty answer or
+// the M3 cap the brief goes out as written. L10: pinned "@{key}" tags in the
+// brief become real mentions.
+func (b *bot) sendJob(ctx context.Context, j store.Job, chat types.JID) {
+	unlock := b.lock(j.Chat)
+	defer unlock()
+	out, stored, mentions := router.ExpandMentions(j.Text, b.nameOf(ctx))
+	how := "as written"
+	if text, ok := b.composeJob(ctx, j, chat); ok {
+		out, stored, mentions = text.send, text.stored, text.mentions
+		how = "written now"
+	}
+	sentID := b.sendMentions(ctx, chat, out, nil, mentionJIDs(mentions))
+	log.Printf("scheduler: sent job %d %s (%d mentions)", j.ID, how, len(mentions))
+	if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID,
+		To: b.mentionNames(ctx, mentions, "")}); err != nil { // K7
+		log.Printf("scheduler: store: %v", err)
+	}
+	if j.Repeat != "" {
+		if err := b.db.NoteJobSent(ctx, j.ID, stored); err != nil {
+			log.Printf("scheduler: job %d: note sent: %v", j.ID, err)
 		}
 	}
+}
+
+type composed struct {
+	send, stored string
+	mentions     []router.Mention
+}
+
+// composeJob asks the model for a due job's message (T1), with the same
+// context a reply in that chat gets, read-only memory tools and web search.
+// ok is false when the brief should be sent as written instead.
+func (b *bot) composeJob(ctx context.Context, j store.Job, chat types.JID) (composed, bool) {
+	if !b.claude.SupportsTools() {
+		return composed{}, false // CLI mode: no tools; keep the brief
+	}
+	if b.overBudget(ctx) {
+		log.Printf("scheduler: job %d: over the daily budget, brief as written", j.ID)
+		return composed{}, false // M3
+	}
+	chatKey := j.Chat
+	isGroup := chat.Server == types.GroupServer
+	history, err := b.db.History(ctx, chatKey)
+	if err != nil {
+		log.Printf("scheduler: history: %v", err)
+	}
+	summary, err := b.db.Summary(ctx, chatKey)
+	if err != nil {
+		log.Printf("scheduler: summary: %v", err)
+	}
+	var reminders []router.Reminder // N3: the others still pending
+	if jobs, err := b.db.ListJobs(ctx, chatKey, ""); err == nil {
+		for _, o := range jobs {
+			if o.ID == j.ID {
+				continue
+			}
+			_, text, _ := router.ExpandMentions(o.Text, b.nameOf(ctx))
+			reminders = append(reminders, router.Reminder{At: o.NextAt, Text: text, Repeat: o.Repeat})
+		}
+	}
+	// The request is the creator's (their standing preferences apply), or
+	// nobody's for the bot's own idea.
+	req := router.Line{Time: time.Now(), SenderName: j.CreatedName, SenderID: j.CreatedBy}
+	if k := j.CreatedBy; k != "" {
+		if pn, ok := strings.CutPrefix(k, "pn:"); ok {
+			req.Whitelisted = b.allowed("", pn)
+		} else {
+			req.Whitelisted = b.allowed(k, "")
+		}
+	}
+	if j.SelfInitiated || req.SenderName == "" {
+		req = router.Line{Time: req.Time, SenderName: b.cfg.BotName + " (your own scheduled message)"}
+	}
+	handles := router.AssignHandles(history, &req)
+	var members map[string]member
+	if isGroup {
+		var keys []string
+		keys, members = b.groupMembers(ctx, chat)
+		router.AddHandles(handles, keys)
+	}
+	// Tagged people get handles even if they haven't spoken lately.
+	var tagged []string
+	_, _, ms := router.ExpandMentions(j.Text, b.nameOf(ctx))
+	for _, m := range ms {
+		tagged = append(tagged, m.Key)
+	}
+	router.AddHandles(handles, tagged)
+	people := b.people(ctx, handles, history, req, members)
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
+	}
+	for h, k := range handles {
+		if names[h] == "" {
+			names[h] = b.nameOf(ctx)(k)
+		}
+	}
+	brief := router.UnpinMentions(j.Text, handles, b.nameOf(ctx))
+	text := router.ScheduledRequest(brief, j.Repeat, j.Sent)
+	mems, err := b.db.SearchMemories(ctx, chatKey, brief, b.cfg.MemoryResults)
+	if err != nil {
+		log.Printf("scheduler: memories: %v", err)
+	}
+	turn := &memtools.Turn{DB: b.db, Chat: chatKey, Handles: handles, Names: names, Requester: req, Vectors: b.vectors}
+	toolset := turn.ReadTools() // T1: read-only memory; web search comes with the client
+	toolBytes := 0
+	for _, t := range toolset {
+		js, _ := json.Marshal(t.Schema)
+		toolBytes += len(t.Name) + len(t.Description) + len(js)
+	}
+	persona, err := b.db.Persona(ctx)
+	if err != nil {
+		log.Printf("scheduler: persona: %v", err)
+	}
+	system := router.SystemPrompt(b.cfg.BotName, persona, true)
+	full := router.FitPromptWith(system, router.Prompt{
+		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: req, Text: text, Now: time.Now(), Group: isGroup,
+	}, b.cfg.ContextTokens, b.ratio.BytesPerToken(), toolBytes)
+	var st llm.Stats
+	reply, err := b.claude.Reply(llm.WithStats(ctx, &st), system, full, nil, toolset)
+	b.account("scheduled "+chatKey, st)
+	if err != nil {
+		log.Printf("scheduler: job %d: compose: %v; brief as written", j.ID, err)
+		return composed{}, false
+	}
+	reply = strings.TrimSpace(router.ParseReply(reply).Text) // tags (persona) ignored here
+	if reply == "" {
+		log.Printf("scheduler: job %d: empty compose; brief as written", j.ID)
+		return composed{}, false
+	}
+	send, stored, mentions := router.ResolveMentions(reply, handles, names)
+	return composed{send, stored, mentions}, true
 }
 
 // guessMerges folds name-only profiles into the real account they belong

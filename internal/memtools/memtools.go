@@ -54,6 +54,12 @@ func (t *Turn) Tools() []llm.Tool {
 	return []llm.Tool{llm.FactSearchTool(t.Search()), t.saveFactTool(), t.invalidateTool(), t.saveMemoryTool(), t.chatHistoryTool()}
 }
 
+// ReadTools returns the memory tools that only read: search_facts and
+// chat_history, for writing a due scheduled message (T1).
+func (t *Turn) ReadTools() []llm.Tool {
+	return []llm.Tool{llm.FactSearchTool(t.Search()), t.chatHistoryTool()}
+}
+
 // CuratorTools returns the tools for a curator pass: save_fact only.
 func (t *Turn) CuratorTools() []llm.Tool {
 	t.Curator = true

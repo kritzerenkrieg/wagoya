@@ -30,6 +30,10 @@ A phase starts only when its rows are Decided.
 | N | Phase N: Time precision |
 | O | Phase O: Claude Code tasks |
 | P | Phase P: Harness cost |
+| Q | Phase Q: Claude Code projects |
+| R | Phase R: Claude Code as the owner runs it |
+| S | Phase S: Addressing and attribution |
+| T | Phase T: Live scheduled messages |
 
 | Code | Topic | Status | Decision / Question |
 |---|---|---|---|
@@ -41,6 +45,7 @@ A phase starts only when its rows are Decided.
 | A6 | Language / runtime | Decided | Go. User choice. Replaces the Node/TypeScript prototype. |
 | A7 | Subscription token use | Decided | Keep A5. The bot is a personal assistant for the user, used by few people. Claude is called through the `claude` CLI in headless mode (`claude -p`) with tools disabled, so the VPS needs the CLI installed. User choice. |
 | A8 | Node prototype | Decided | Delete the Node/TypeScript prototype and switch `AGENTS.md` to Go commands. User agreed. |
+| A9 | Codes after Z | Question | Raised by the user (2026-11-09): phases are single letters and S is used, so seven are left (T-Z), and codes are never reused. Options: (a) after Z come AA, AB, … (codes like AA1); stable, sorts after Z, nothing renamed; (b) related work joins an existing phase as more numbers (R7, R8) instead of a new letter, which slows the use of letters but blurs "a phase is one feature"; (c) both: (b) for follow-ups of a phase, (a) when letters run out. |
 | B1 | Group reply trigger | Decided | In groups the bot replies when it is @mentioned (a real WhatsApp mention, not typed text) or when a message replies to one of its messages. The mention token is shown to the model as `@<BOT_NAME>`. Replaced the `!$` prefix by user request; DMs are unchanged (B4) and still tolerate the old prefix. User request. |
 | B2 | Group listening | Decided | The bot reads every group message and keeps it as context, even when it doesn't reply. User request. |
 | B3 | Who may trigger | Decided | DMs: whitelist only. Groups: any member may trigger by mentioning or replying to the bot (B1). User choice. |
@@ -144,3 +149,4 @@ A phase starts only when its rows are Decided.
 | R6 | Permission mode auto | Decided | Chosen by the user (2026-11-09) with R1: tasks run in `auto`, the owner's own default. Claude Code's classifier approves what it judges safe and only the rest is relayed (R4). The owner's own settings (allow and deny rules, CLAUDE.md) apply as in their own sessions. The 30-minute run limit counts working time only, not time waiting on a prompt. |
 | S1 | Nudges aimed at the right person | Decided | Chosen by the user (2026-11-09): in a group, Rin ended a reply to the owner with "You had an anabin check to do at 11. It's 12:35.", a nudge meant for another member. Nudging someone else in the conversation is fine, but the wording mixed up who was meant. Rule: a line meant for anyone other than the person the reply is addressed to names them (tag or name) and never uses "you" for them; "you" in a reply is always its addressee. Golden case from this exchange with names replaced. |
 | S2 | Only agreed deadlines in the summary | Decided | Chosen by the user (2026-11-09) with S1: Rin's own "It's 11am. Do the check." became "deadline was 11:00" in the chat summary, though the member never set or agreed to it. The curator now records deadlines and commitments as someone's only when that person set or agreed to them; Rin's pushing is written as her suggestion. |
+| T1 | Scheduled messages written when due | Decided | Chosen by the user (2026-11-10): a scheduled message sent the stored text as written (J7, J10), so a recurring one repeated itself and knew nothing of what happened since. Now the stored text is a brief (what the message is for, who it tags; L10 pinning unchanged), and when any job (one-off or recurring) is due the server makes a reply-style model call with this chat's context (summary, window, people and states, `<now>`, `<reminders>`) and, for a recurring job, its last 3 sent texts, so each run is fresh. Always sends: the run can't decide to stay silent. Tools: read-only memory (fact and chat history search) and web search. On a model error, an empty answer or the M3 cap, the brief is sent as written. Cost about one reply ($0.003) per run, counted in M3. Existing jobs' text is read as their brief. |

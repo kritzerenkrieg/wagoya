@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -17,7 +19,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 	text TEXT NOT NULL,
 	next_at INTEGER NOT NULL,
 	repeat TEXT NOT NULL,          -- '', hourly, daily, weekdays, weekly
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	sent TEXT NOT NULL DEFAULT ''  -- T1: JSON list of the last sent texts, newest first
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON jobs(next_at);
 `
@@ -32,9 +35,14 @@ type Job struct {
 	Text          string
 	NextAt        time.Time
 	Repeat        string
+	Sent          []string // T1: the last MaxJobSent texts sent, newest first
 }
 
-const jobCols = `id, chat, created_by, created_name, self_initiated, text, next_at, repeat`
+// MaxJobSent is how many sent texts a job keeps, so its next run can say
+// something new (T1).
+const MaxJobSent = 3
+
+const jobCols = `id, chat, created_by, created_name, self_initiated, text, next_at, repeat, sent`
 
 func (s *Store) jobs(ctx context.Context, q string, args ...any) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+jobCols+` FROM jobs `+q, args...)
@@ -46,8 +54,12 @@ func (s *Store) jobs(ctx context.Context, q string, args ...any) ([]Job, error) 
 	for rows.Next() {
 		var j Job
 		var at int64
-		if err := rows.Scan(&j.ID, &j.Chat, &j.CreatedBy, &j.CreatedName, &j.SelfInitiated, &j.Text, &at, &j.Repeat); err != nil {
+		var sent string
+		if err := rows.Scan(&j.ID, &j.Chat, &j.CreatedBy, &j.CreatedName, &j.SelfInitiated, &j.Text, &at, &j.Repeat, &sent); err != nil {
 			return nil, err
+		}
+		if sent != "" {
+			_ = json.Unmarshal([]byte(sent), &j.Sent)
 		}
 		j.NextAt = time.Unix(at, 0)
 		out = append(out, j)
@@ -101,5 +113,34 @@ func (s *Store) DueJobs(ctx context.Context, now time.Time) ([]Job, error) {
 // RescheduleJob moves a recurring job to its next run.
 func (s *Store) RescheduleJob(ctx context.Context, id int64, next time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE jobs SET next_at = ? WHERE id = ?`, next.Unix(), id)
+	return err
+}
+
+// NoteJobSent records text as the job's newest sent text, keeping the last
+// MaxJobSent (T1).
+func (s *Store) NoteJobSent(ctx context.Context, id int64, text string) error {
+	j, ok, err := s.JobByID(ctx, id)
+	if err != nil || !ok {
+		return err
+	}
+	sent := append([]string{text}, j.Sent...)
+	if len(sent) > MaxJobSent {
+		sent = sent[:MaxJobSent]
+	}
+	b, err := json.Marshal(sent)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE jobs SET sent = ? WHERE id = ?`, string(b), id)
+	return err
+}
+
+// migrateJobs adds the sent texts to jobs from before T1.
+func migrateJobs(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('jobs') WHERE name = 'sent'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE jobs ADD COLUMN sent TEXT NOT NULL DEFAULT ''`)
 	return err
 }

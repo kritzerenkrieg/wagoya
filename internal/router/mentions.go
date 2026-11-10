@@ -90,3 +90,23 @@ func ResolveMentions(text string, handles, names map[string]string) (send, store
 	}
 	return ExpandMentions(PinMentions(text, handles, names), func(k string) string { return byKey[k] })
 }
+
+// UnpinMentions shows pinned "@{key}" tags to the model as this prompt's
+// handles ("@P2"), or "@Name" for someone without one (T1: a scheduled
+// message's brief is rewritten in a new prompt).
+func UnpinMentions(text string, handles map[string]string, nameOf func(key string) string) string {
+	byKey := map[string]string{}
+	for h, k := range handles {
+		byKey[k] = h
+	}
+	return pinnedRe.ReplaceAllStringFunc(text, func(m string) string {
+		key := m[2 : len(m)-1]
+		if h := byKey[key]; h != "" {
+			return "@" + h
+		}
+		if n := strings.TrimSpace(nameOf(key)); n != "" {
+			return "@" + n
+		}
+		return "@someone"
+	})
+}

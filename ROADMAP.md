@@ -185,6 +185,13 @@ flowchart LR
 
 - [ ] Nudges aimed at the right person; agreed deadlines only (S1, S2). Done when: the golden case "a nudge for someone else names them, never "you"" passes with the rest of the golden set; and live, a day of group chat has no nudge addressed to the wrong person.
 
+## Phase T: Live scheduled messages
+
+**Goal:** a scheduled message fits the moment it is sent, and a recurring one never repeats itself word for word.
+**Exit:** a day of a daily reminder reads as new each time and reflects what was said in the chat.
+
+- [ ] Scheduled messages written when due (T1). Done when: store tests cover the sent texts (last 3) and the migration; router tests cover the run's request and unpinned tags; and live, a recurring reminder's runs differ and refer to the chat, and a run over the M3 cap sends its brief as written.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

@@ -82,7 +82,7 @@ func (t *Turn) scheduleTool() llm.Tool {
 	return llm.Tool{
 		Name: "schedule_message",
 		Description: "Schedule a message you will send later: a reminder someone asked for, or your own idea (self_initiated), like nagging them to eat or sleep. " +
-			"Write text as the exact message you will send then, in character. Times are local, like <now>. To tag someone, write @P2 as in replies; it stays a real mention when sent. " +
+			"Write text as the message you would send then, in character. When it is due you write it afresh from it, fitted to that moment and different from earlier runs; if that fails, text is sent as written. Times are local, like <now>. To tag someone, write @P2 as in replies; it stays a real mention when sent. " +
 			"Owners (whitelisted) may repeat it and target another chat they are in; others only get one-off reminders for themselves in this chat. " +
 			"At most 10 pending per chat. Only say it is scheduled if this returned scheduled.",
 		Schema: map[string]any{"type": "object", "required": []string{"text"}, "properties": map[string]any{

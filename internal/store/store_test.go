@@ -390,6 +390,41 @@ func TestJobsSurviveRestart(t *testing.T) {
 	}
 }
 
+// T1: a job keeps its last 3 sent texts, newest first, and a jobs table
+// from before T1 gets the column.
+func TestJobSentTexts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "j.db")
+	s, err := Open(path, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := s.db.Exec(`ALTER TABLE jobs DROP COLUMN sent`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if s, err = Open(path, 16); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	id, err := s.AddJob(ctx, Job{Chat: "g", CreatedBy: "john", Text: "eat", NextAt: time.Now(), Repeat: "daily"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, txt := range []string{"one", "two", "three", "four"} {
+		if err := s.NoteJobSent(ctx, id, txt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, ok, err := s.JobByID(ctx, id)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if strings.Join(j.Sent, ",") != "four,three,two" {
+		t.Fatalf("sent = %q", j.Sent)
+	}
+}
+
 // L2: /reset drops the transcript and summary of one chat only; memories,
 // facts and jobs stay, and the curator only sees messages after the reset.
 func TestResetChat(t *testing.T) {
