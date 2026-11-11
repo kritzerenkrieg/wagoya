@@ -86,13 +86,6 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "backlog" { // U1: Vikunja import
-		if err := backlogCommand(os.Args[2:], os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "backlog:", err)
-			os.Exit(1)
-		}
-		return
-	}
 	if err := config.LoadDotEnv(".env"); err != nil {
 		log.Fatalf("read .env: %v", err)
 	}
@@ -720,7 +713,7 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 			}
 		}
 		if h == req.Handle && b.claude.SupportsTools() { // U1: a nudge to list_tasks
-			if p.OpenTasks, err = b.db.CountOpenTodos(ctx, k); err != nil {
+			if p.TaskCounts, err = b.db.TodoCounts(ctx, k); err != nil {
 				log.Printf("open tasks: %v", err)
 			}
 		}

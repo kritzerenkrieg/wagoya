@@ -192,6 +192,14 @@ flowchart LR
 
 - [ ] Scheduled messages written when due (T1). Done when: store tests cover the sent texts (last 3) and the migration; router tests cover the run's request and unpinned tags; and live, a recurring reminder's runs differ and refer to the chat, and a run over the M3 cap sends its brief as written.
 
+## Phase U: Built-in backlog
+
+**Goal:** tasks live in one place, Rin's own backlog, and she always answers about them from it.
+**Exit:** a week without a task kept as a fact or answered from memory.
+
+- [ ] Backlog table and tools (U1). Done when: store tests cover ownership and search; memtools tests show one person can't list or change another's task; the router test shows the counts; and live, "what are my tasks?" from the owner is answered with `list_tasks`, and another member asking for the owner's tasks is told only the owner can ask.
+- [ ] Task status and order (U2). Done when: store tests cover the order (due time, then ongoing, hold, backlog, done last) and the migration of "[Ongoing]" names; memtools tests cover setting and filtering by status; and live, after deploy the owner's "[Ongoing]" tasks show as ongoing without the tag, and Rin lists tasks soonest due first.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

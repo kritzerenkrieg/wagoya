@@ -34,7 +34,7 @@ func TestBacklogTools(t *testing.T) {
 	bob := backlogTurn(t, db, router.Line{SenderID: "bob", SenderName: "Bob"})
 
 	out := ann("add_task", `{"name":"Fix bike","description":"rear brake","due":"2026-11-06 18:00"}`)
-	if !strings.HasPrefix(out, "added: task 1 | open | due Fri 2026-11-06 18:00 (in 1d3h) | Fix bike | rear brake") {
+	if !strings.HasPrefix(out, "added: task 1 | backlog | due Fri 2026-11-06 18:00 (in 1d3h) | Fix bike | rear brake") {
 		t.Fatalf("add: %s", out)
 	}
 	if out := ann("add_task", `{"name":"  "}`); !strings.HasPrefix(out, "error") {
@@ -50,7 +50,19 @@ func TestBacklogTools(t *testing.T) {
 		t.Fatalf("ann update: %s", out)
 	}
 	if out := ann("list_tasks", `{}`); out != "no tasks" {
-		t.Fatalf("open after done: %s", out)
+		t.Fatalf("active after done: %s", out)
+	}
+	if out := ann("add_task", `{"name":"Trip","status":"on hold"}`); !strings.Contains(out, "| hold |") {
+		t.Fatalf("add on hold: %s", out)
+	}
+	if out := ann("update_task", `{"id":2,"status":"ongoing"}`); !strings.Contains(out, "task 2 | ongoing |") {
+		t.Fatalf("to ongoing: %s", out)
+	}
+	if out := ann("update_task", `{"id":2,"status":"later"}`); !strings.HasPrefix(out, "error") {
+		t.Fatalf("bad status: %s", out)
+	}
+	if out := ann("list_tasks", `{"status":"ongoing"}`); !strings.HasPrefix(out, "task 2 | ongoing") {
+		t.Fatalf("list ongoing: %s", out)
 	}
 	if out := ann("list_tasks", `{"status":"all","query":"brake"}`); !strings.Contains(out, "task 1 |") {
 		t.Fatalf("search all: %s", out)

@@ -62,9 +62,10 @@ func (t *Turn) addTaskTool() llm.Tool {
 			"name":        map[string]any{"type": "string", "description": "Short task name, under 200 characters."},
 			"description": map[string]any{"type": "string", "description": "Optional details."},
 			"due":         map[string]any{"type": "string", "description": "Optional local due time, \"YYYY-MM-DD HH:MM\", like <now>."},
+			"status":      map[string]any{"type": "string", "enum": store.TodoStatuses, "description": "Default backlog; ongoing if they are working on it now, hold if paused."},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
-			var in struct{ Name, Description, Due string }
+			var in struct{ Name, Description, Due, Status string }
 			if err := json.Unmarshal(input, &in); err != nil {
 				return "error: invalid input: " + err.Error()
 			}
@@ -75,7 +76,11 @@ func (t *Turn) addTaskTool() llm.Tool {
 			if err := checkTaskText(in.Name, in.Description); err != nil {
 				return errText(err)
 			}
-			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description}
+			st, err := parseStatus(in.Status, store.TodoBacklog)
+			if err != nil {
+				return errText(err)
+			}
+			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description, Status: st}
 			if in.Due != "" {
 				var err error
 				if td.Due, err = t.parseDue(in.Due); err != nil {
@@ -86,7 +91,7 @@ func (t *Turn) addTaskTool() llm.Tool {
 			if err != nil {
 				return "error: storage failed"
 			}
-			td.ID, td.Status = id, store.TodoOpen
+			td.ID = id
 			log.Printf("add_task %d by %s", id, t.reqKey())
 			return "added: " + t.taskLine(td)
 		},
@@ -96,11 +101,11 @@ func (t *Turn) addTaskTool() llm.Tool {
 func (t *Turn) updateTaskTool() llm.Tool {
 	return llm.Tool{
 		Name: "update_task",
-		Description: "Change one of the requester's own tasks by its id from list_tasks: mark it done (or open again), rename it, change its description or due time. " +
+		Description: "Change one of the requester's own tasks by its id from list_tasks: set its status (backlog, ongoing, hold, done), rename it, change its description or due time. Status goes in status, never in the name. " +
 			"Only their own tasks: nobody can change another person's. Only say it changed if this returned updated.",
 		Schema: map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
 			"id":          map[string]any{"type": "integer", "description": "The task id (\"task 12 | ...\")."},
-			"status":      map[string]any{"type": "string", "enum": []string{store.TodoOpen, store.TodoDone}},
+			"status":      map[string]any{"type": "string", "enum": store.TodoStatuses},
 			"name":        map[string]any{"type": "string"},
 			"description": map[string]any{"type": "string", "description": "Replaces the whole description."},
 			"due":         map[string]any{"type": "string", "description": "Local \"YYYY-MM-DD HH:MM\", or \"none\" to remove the due time."},
@@ -115,11 +120,11 @@ func (t *Turn) updateTaskTool() llm.Tool {
 			}
 			var c store.TodoChange
 			if in.Status != nil {
-				s := strings.ToLower(strings.TrimSpace(*in.Status))
-				if s != store.TodoOpen && s != store.TodoDone {
-					return "error: status must be open or done"
+				st, err := parseStatus(*in.Status, "")
+				if err != nil || st == "" {
+					return "error: status must be one of " + strings.Join(store.TodoStatuses, ", ")
 				}
-				c.Status = &s
+				c.Status = &st
 			}
 			if in.Name != nil {
 				n := strings.TrimSpace(*in.Name)
@@ -170,9 +175,10 @@ func (t *Turn) listTasksTool() llm.Tool {
 	return llm.Tool{
 		Name: "list_tasks",
 		Description: "List or search the requester's own tasks (their backlog, todo list). Always call this before answering anything about their tasks; never answer from memory or the transcript. " +
+			"Results are sorted by due time, soonest first (overdue first, no due time last), then ongoing, hold, backlog; keep that order when you list them, and give each task's status. " +
 			"It shows only the requester's tasks: you can't see anyone else's, so if someone asks about another person's tasks, say only that person can ask.",
 		Schema: map[string]any{"type": "object", "properties": map[string]any{
-			"status": map[string]any{"type": "string", "enum": []string{store.TodoOpen, store.TodoDone, "all"}, "description": "Default open."},
+			"status": map[string]any{"type": "string", "enum": append([]string{store.TodoActive}, append(store.TodoStatuses, "all")...), "description": "Default active: every task that isn't done."},
 			"query":  map[string]any{"type": "string", "description": "Optional words to find in the name or description."},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
@@ -184,13 +190,14 @@ func (t *Turn) listTasksTool() llm.Tool {
 			}
 			status := strings.ToLower(strings.TrimSpace(in.Status))
 			switch status {
-			case "":
-				status = store.TodoOpen
+			case "", store.TodoActive, "open":
+				status = store.TodoActive
 			case "all":
 				status = ""
-			case store.TodoOpen, store.TodoDone:
 			default:
-				return "error: status must be open, done or all"
+				if !store.ValidTodoStatus(status) {
+					return "error: status must be active, all or one of " + strings.Join(store.TodoStatuses, ", ")
+				}
 			}
 			got, err := t.DB.ListTodos(ctx, t.reqKey(), status, in.Query, maxTaskList+1)
 			if err != nil {
@@ -212,7 +219,25 @@ func (t *Turn) listTasksTool() llm.Tool {
 	}
 }
 
-// taskLine renders a task for the model: "task 12 | open | due Tue
+// parseStatus reads a status ("on hold" and "open" are accepted as hold
+// and backlog); empty gives def.
+func parseStatus(s, def string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "":
+		return def, nil
+	case "on hold", "paused":
+		return store.TodoHold, nil
+	case "open", "todo":
+		return store.TodoBacklog, nil
+	}
+	if !store.ValidTodoStatus(s) {
+		return "", errors.New("status must be one of " + strings.Join(store.TodoStatuses, ", "))
+	}
+	return s, nil
+}
+
+// taskLine renders a task for the model: "task 12 | ongoing | due Tue
 // 2026-11-12 18:00 (in 1d2h) | Name | description".
 func (t *Turn) taskLine(td store.Todo) string {
 	now := t.now()

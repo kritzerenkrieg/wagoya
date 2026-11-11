@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -19,8 +20,8 @@ CREATE TABLE IF NOT EXISTS backlog (
 	name TEXT NOT NULL,
 	description TEXT NOT NULL DEFAULT '',
 	due_at INTEGER NOT NULL DEFAULT 0,  -- unix seconds, 0 for none
-	status TEXT NOT NULL DEFAULT 'open', -- open, done
-	source TEXT NOT NULL DEFAULT '',     -- e.g. "vikunja:12" for imported tasks
+	status TEXT NOT NULL DEFAULT 'backlog', -- backlog, ongoing, hold, done (U2)
+	source TEXT NOT NULL DEFAULT '',     -- where a task came from, if not Rin
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
 	done_at INTEGER NOT NULL DEFAULT 0
@@ -28,11 +29,29 @@ CREATE TABLE IF NOT EXISTS backlog (
 CREATE INDEX IF NOT EXISTS backlog_owner ON backlog(owner, status);
 `
 
-// Todo statuses.
+// Todo statuses (U2). A new task is in the backlog.
 const (
-	TodoOpen = "open"
-	TodoDone = "done"
+	TodoBacklog = "backlog"
+	TodoOngoing = "ongoing"
+	TodoHold    = "hold"
+	TodoDone    = "done"
 )
+
+// TodoStatuses are the statuses in list order.
+var TodoStatuses = []string{TodoOngoing, TodoHold, TodoBacklog, TodoDone}
+
+// TodoActive is a ListTodos filter: every task that isn't done.
+const TodoActive = "active"
+
+// ValidTodoStatus reports whether s is a status.
+func ValidTodoStatus(s string) bool {
+	for _, v := range TodoStatuses {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
 
 // ErrNotYourTodo is returned for a task that doesn't exist or isn't the
 // caller's; the two look the same, so nobody learns of others' tasks.
@@ -102,7 +121,7 @@ func (s *Store) AddTodo(ctx context.Context, t Todo) (int64, error) {
 		return 0, errors.New("task needs an owner and a name")
 	}
 	if t.Status == "" {
-		t.Status = TodoOpen
+		t.Status = TodoBacklog
 	}
 	now := s.now()
 	if t.Created.IsZero() {
@@ -164,16 +183,22 @@ func (s *Store) UpdateTodo(ctx context.Context, owner string, id int64, c TodoCh
 	return t, err
 }
 
-// ListTodos returns owner's tasks with status ("" for any), whose name or
-// description contains query (any case; "" for all): open ones by due time
-// (none last), then newest; done ones most recently done first.
+// ListTodos returns owner's tasks with status (a status, TodoActive for
+// all but done, or "" for any), whose name or description contains query
+// (any case; "" for all). U2: by due time, soonest first and none last,
+// then ongoing, hold, backlog, then newest; done ones last, most recently
+// done first.
 func (s *Store) ListTodos(ctx context.Context, owner, status, query string, limit int) ([]Todo, error) {
 	if owner == "" {
 		return nil, nil
 	}
 	q := `WHERE owner = ?`
 	args := []any{owner}
-	if status != "" {
+	switch status {
+	case "":
+	case TodoActive:
+		q += ` AND status != 'done'`
+	default:
 		q += ` AND status = ?`
 		args = append(args, status)
 	}
@@ -182,54 +207,71 @@ func (s *Store) ListTodos(ctx context.Context, owner, status, query string, limi
 		q += ` AND (lower(name) LIKE ? ESCAPE '\' OR lower(description) LIKE ? ESCAPE '\')`
 		args = append(args, like, like)
 	}
-	q += ` ORDER BY status = 'done', CASE WHEN status = 'done' THEN -done_at ELSE 0 END, due_at = 0, due_at, created_at DESC, id DESC LIMIT ?`
+	q += ` ORDER BY status = 'done', CASE WHEN status = 'done' THEN -done_at ELSE 0 END, due_at = 0, due_at,
+		CASE status WHEN 'ongoing' THEN 0 WHEN 'hold' THEN 1 ELSE 2 END, created_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 	return s.todos(ctx, q, args...)
 }
 
-// CountOpenTodos is how many open tasks owner has.
-func (s *Store) CountOpenTodos(ctx context.Context, owner string) (int, error) {
-	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM backlog WHERE owner = ? AND status = 'open'`, owner).Scan(&n)
-	return n, err
-}
-
-// HasTodoSource reports whether a task with this source was already
-// imported, so an import can run twice.
-func (s *Store) HasTodoSource(ctx context.Context, source string) (bool, error) {
-	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM backlog WHERE source = ? LIMIT 1`, source).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+// TodoCounts is how many tasks owner has per status that isn't done.
+func (s *Store) TodoCounts(ctx context.Context, owner string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT status, count(*) FROM backlog WHERE owner = ? AND status != 'done' GROUP BY status`, owner)
+	if err != nil {
+		return nil, err
 	}
-	return err == nil, err
-}
-
-// PersonByPN returns the profile key for a phone number (digits): the LID
-// profile if known, else "pn:<number>".
-func (s *Store) PersonByPN(ctx context.Context, pn string) (string, error) {
-	var key string
-	err := s.db.QueryRowContext(ctx, `SELECT key FROM people WHERE pn = ? ORDER BY key LIKE 'pn:%' LIMIT 1`, pn).Scan(&key)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "pn:" + pn, nil
-	}
-	return key, err
-}
-
-// RetireFactsMentioning marks key's valid facts that mention any of words
-// (any case) as outdated, kept as history like any invalidated fact (U1:
-// facts that point at the old task app). It returns how many.
-func (s *Store) RetireFactsMentioning(ctx context.Context, key string, words []string, reason string) (int64, error) {
-	var total int64
-	for _, w := range words {
-		like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(w)) + "%"
-		res, err := s.db.ExecContext(ctx, `UPDATE person_facts SET invalid_at = ?, invalid_reason = ?
-			WHERE person = ? AND invalid_at IS NULL AND lower(text) LIKE ? ESCAPE '\'`, s.now().Unix(), reason, key, like)
-		if err != nil {
-			return total, err
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return nil, err
 		}
-		n, _ := res.RowsAffected()
-		total += n
+		out[st] = n
 	}
-	return total, nil
+	return out, rows.Err()
+}
+
+var statusPrefix = regexp.MustCompile(`(?i)^\s*\[(ongoing|on hold|hold|backlog)\]\s*`)
+
+// migrateBacklog moves tasks from before U2 to the new statuses: open
+// becomes backlog, and a "[Ongoing]"-style tag at the start of a name
+// becomes the status.
+func migrateBacklog(db *sql.DB) error {
+	if _, err := db.Exec(`UPDATE backlog SET status = 'backlog' WHERE status = 'open'`); err != nil {
+		return err
+	}
+	rows, err := db.Query(`SELECT id, name FROM backlog WHERE name LIKE '[%' AND status != 'done'`)
+	if err != nil {
+		return err
+	}
+	type fix struct {
+		id           int64
+		name, status string
+	}
+	var fixes []fix
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		if m := statusPrefix.FindStringSubmatch(name); m != nil {
+			st := strings.ToLower(m[1])
+			if st == "on hold" {
+				st = TodoHold
+			}
+			if rest := strings.TrimSpace(name[len(m[0]):]); rest != "" {
+				fixes = append(fixes, fix{id, rest, st})
+			}
+		}
+	}
+	rows.Close()
+	for _, f := range fixes {
+		if _, err := db.Exec(`UPDATE backlog SET name = ?, status = ? WHERE id = ?`, f.name, f.status, f.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
