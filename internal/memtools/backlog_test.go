@@ -34,7 +34,7 @@ func TestBacklogTools(t *testing.T) {
 	bob := backlogTurn(t, db, router.Line{SenderID: "bob", SenderName: "Bob"})
 
 	out := ann("add_task", `{"name":"Fix bike","description":"rear brake","due":"2026-11-06 18:00"}`)
-	if !strings.HasPrefix(out, "added: task 1 | backlog | due Fri 2026-11-06 18:00 (in 1d3h) | Fix bike | rear brake") {
+	if !strings.HasPrefix(out, "added: task 1 | backlog | no category | due Fri 2026-11-06 18:00 (in 1d3h) | Fix bike | rear brake") {
 		t.Fatalf("add: %s", out)
 	}
 	if out := ann("add_task", `{"name":"  "}`); !strings.HasPrefix(out, "error") {
@@ -66,6 +66,29 @@ func TestBacklogTools(t *testing.T) {
 	}
 	if out := ann("list_tasks", `{"status":"all","query":"brake"}`); !strings.Contains(out, "task 1 |") {
 		t.Fatalf("search all: %s", out)
+	}
+	// U4: categories
+	if out := ann("add_task", `{"name":"Paint","category":" Hobby "}`); !strings.Contains(out, "task 3 | backlog | hobby |") {
+		t.Fatalf("add category: %s", out)
+	}
+	if out := ann("update_task", `{"id":2,"category":"Work"}`); !strings.Contains(out, "task 2 | ongoing | work |") {
+		t.Fatalf("set category: %s", out)
+	}
+	out = ann("list_tasks", `{"category":"work"}`)
+	if !strings.HasPrefix(out, "task 2 |") || strings.Contains(out, "task 3") || !strings.HasSuffix(out, "their categories: hobby, work") {
+		t.Fatalf("filter work: %s", out)
+	}
+	if out := ann("update_task", `{"id":2,"category":"none"}`); !strings.Contains(out, "| no category |") {
+		t.Fatalf("clear category: %s", out)
+	}
+	if out := ann("list_tasks", `{"category":"none"}`); !strings.HasPrefix(out, "task 2 |") || strings.Contains(out, "task 3") {
+		t.Fatalf("filter none: %s", out)
+	}
+	if out := ann("add_task", `{"name":"x","category":"`+strings.Repeat("a", 31)+`"}`); !strings.HasPrefix(out, "error") {
+		t.Fatalf("long category: %s", out)
+	}
+	if out := bob("list_tasks", `{"category":"hobby"}`); out != "no tasks" {
+		t.Fatalf("bob sees ann's categories: %s", out)
 	}
 	if tools := (&Turn{DB: db, Handles: map[string]string{}}).BacklogTools(); tools != nil {
 		t.Fatal("tools without a requester")

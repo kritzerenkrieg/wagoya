@@ -42,6 +42,21 @@ func (t *Turn) parseDue(s string) (time.Time, error) {
 	return w, nil
 }
 
+// taskCategory reads a category (U4): free text, made lowercase; "none"
+// gives "".
+func taskCategory(c string) (string, error) {
+	c = store.NormTodoCategory(c)
+	if c == store.TodoNoCategory {
+		c = ""
+	}
+	if utf8.RuneCountInString(c) > store.MaxTodoCategory {
+		return "", fmt.Errorf("category is too long (max %d characters)", store.MaxTodoCategory)
+	}
+	return c, nil
+}
+
+const categoryHint = "Optional category, free text like work or hobby. Reuse one the requester already has (list_tasks shows them); set one when the task clearly belongs to one, else leave it empty."
+
 func checkTaskText(name, desc string) error {
 	switch {
 	case utf8.RuneCountInString(name) > maxTaskName:
@@ -63,9 +78,10 @@ func (t *Turn) addTaskTool() llm.Tool {
 			"description": map[string]any{"type": "string", "description": "Optional details."},
 			"due":         map[string]any{"type": "string", "description": "Optional local due time, \"YYYY-MM-DD HH:MM\", like <now>."},
 			"status":      map[string]any{"type": "string", "enum": store.TodoStatuses, "description": "Default backlog; ongoing if they are working on it now, hold if paused."},
+			"category":    map[string]any{"type": "string", "description": categoryHint},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
-			var in struct{ Name, Description, Due, Status string }
+			var in struct{ Name, Description, Due, Status, Category string }
 			if err := json.Unmarshal(input, &in); err != nil {
 				return "error: invalid input: " + err.Error()
 			}
@@ -80,7 +96,11 @@ func (t *Turn) addTaskTool() llm.Tool {
 			if err != nil {
 				return errText(err)
 			}
-			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description, Status: st, Chat: t.Chat}
+			cat, err := taskCategory(in.Category)
+			if err != nil {
+				return errText(err)
+			}
+			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description, Status: st, Category: cat, Chat: t.Chat}
 			if in.Due != "" {
 				var err error
 				if td.Due, err = t.parseDue(in.Due); err != nil {
@@ -101,19 +121,20 @@ func (t *Turn) addTaskTool() llm.Tool {
 func (t *Turn) updateTaskTool() llm.Tool {
 	return llm.Tool{
 		Name: "update_task",
-		Description: "Change one of the requester's own tasks by its id from list_tasks: set its status (backlog, ongoing, hold, done), rename it, change its description or due time. Status goes in status, never in the name. " +
+		Description: "Change one of the requester's own tasks by its id from list_tasks: set its status (backlog, ongoing, hold, done) or category, rename it, change its description or due time. Status goes in status, never in the name. " +
 			"Only their own tasks: nobody can change another person's. Only say it changed if this returned updated.",
 		Schema: map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
 			"id":          map[string]any{"type": "integer", "description": "The task id (\"task 12 | ...\")."},
 			"status":      map[string]any{"type": "string", "enum": store.TodoStatuses},
 			"name":        map[string]any{"type": "string"},
 			"description": map[string]any{"type": "string", "description": "Replaces the whole description."},
+			"category":    map[string]any{"type": "string", "description": "Free text like work or hobby, reusing one they have; \"none\" removes it."},
 			"due":         map[string]any{"type": "string", "description": "Local \"YYYY-MM-DD HH:MM\", or \"none\" to remove the due time."},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
 			var in struct {
-				ID                             int64
-				Status, Name, Description, Due *string
+				ID                                       int64
+				Status, Name, Description, Due, Category *string
 			}
 			if err := json.Unmarshal(input, &in); err != nil {
 				return "error: invalid input: " + err.Error()
@@ -136,6 +157,13 @@ func (t *Turn) updateTaskTool() llm.Tool {
 			if in.Description != nil {
 				d := strings.TrimSpace(*in.Description)
 				c.Description = &d
+			}
+			if in.Category != nil {
+				cat, err := taskCategory(*in.Category)
+				if err != nil {
+					return errText(err)
+				}
+				c.Category = &cat
 			}
 			if err := checkTaskText(deref(c.Name), deref(c.Description)); err != nil {
 				return errText(err)
@@ -175,14 +203,15 @@ func (t *Turn) listTasksTool() llm.Tool {
 	return llm.Tool{
 		Name: "list_tasks",
 		Description: "List or search the requester's own tasks (their backlog, todo list). Always call this before answering anything about their tasks; never answer from memory or the transcript. " +
-			"Results are sorted by due time, soonest first (overdue first, no due time last), then ongoing, hold, backlog; keep that order when you list them, and give each task's status. " +
+			"Results are sorted by due time, soonest first (overdue first, no due time last), then ongoing, hold, backlog; keep that order when you list them, and give each task's status (and category, or group by category if they ask). " +
 			"It shows only the requester's tasks: you can't see anyone else's, so if someone asks about another person's tasks, say only that person can ask.",
 		Schema: map[string]any{"type": "object", "properties": map[string]any{
-			"status": map[string]any{"type": "string", "enum": append([]string{store.TodoActive}, append(store.TodoStatuses, "all")...), "description": "Default active: every task that isn't done."},
-			"query":  map[string]any{"type": "string", "description": "Optional words to find in the name or description."},
+			"status":   map[string]any{"type": "string", "enum": append([]string{store.TodoActive}, append(store.TodoStatuses, "all")...), "description": "Default active: every task that isn't done."},
+			"category": map[string]any{"type": "string", "description": "Optional: only this category (like work or hobby), or \"none\" for tasks without one."},
+			"query":    map[string]any{"type": "string", "description": "Optional words to find in the name or description."},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
-			var in struct{ Status, Query string }
+			var in struct{ Status, Category, Query string }
 			if len(input) > 0 {
 				if err := json.Unmarshal(input, &in); err != nil {
 					return "error: invalid input: " + err.Error()
@@ -199,14 +228,14 @@ func (t *Turn) listTasksTool() llm.Tool {
 					return "error: status must be active, all or one of " + strings.Join(store.TodoStatuses, ", ")
 				}
 			}
-			got, err := t.DB.ListTodos(ctx, t.reqKey(), status, in.Query, maxTaskList+1)
+			got, err := t.DB.ListTodos(ctx, t.reqKey(), status, in.Category, in.Query, maxTaskList+1)
 			if err != nil {
 				return "error: storage failed"
 			}
-			if len(got) == 0 {
-				return "no tasks"
-			}
 			var b strings.Builder
+			if len(got) == 0 {
+				b.WriteString("no tasks\n")
+			}
 			for i, td := range got {
 				if i == maxTaskList {
 					b.WriteString("(more: narrow it with query)\n")
@@ -214,7 +243,10 @@ func (t *Turn) listTasksTool() llm.Tool {
 				}
 				b.WriteString(t.taskLine(td) + "\n")
 			}
-			return b.String()
+			if cats, err := t.DB.TodoCategories(ctx, t.reqKey()); err == nil && len(cats) > 0 { // U4: reuse these
+				b.WriteString("their categories: " + strings.Join(cats, ", ") + "\n")
+			}
+			return strings.TrimSuffix(b.String(), "\n")
 		},
 	}
 }
@@ -237,8 +269,8 @@ func parseStatus(s, def string) (string, error) {
 	return s, nil
 }
 
-// taskLine renders a task for the model: "task 12 | ongoing | due Tue
-// 2026-11-12 18:00 (in 1d2h) | Name | description".
+// taskLine renders a task for the model: "task 12 | ongoing | work | due
+// Tue 2026-11-12 18:00 (in 1d2h) | Name | description".
 func (t *Turn) taskLine(td store.Todo) string {
 	now := t.now()
 	due := "no due time"
@@ -265,7 +297,11 @@ func (t *Turn) taskLine(td store.Todo) string {
 	if td.Status == store.TodoDone && !td.Done.IsZero() {
 		status = "done " + td.Done.In(now.Location()).Format("2006-01-02")
 	}
-	line := fmt.Sprintf("task %d | %s | %s | %s", td.ID, status, due, oneLineText(td.Name))
+	cat := td.Category
+	if cat == "" {
+		cat = "no category"
+	}
+	line := fmt.Sprintf("task %d | %s | %s | %s | %s", td.ID, status, cat, due, oneLineText(td.Name))
 	if d := oneLineText(td.Description); d != "" {
 		if utf8.RuneCountInString(d) > 300 {
 			d = string([]rune(d)[:300]) + "…"

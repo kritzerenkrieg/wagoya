@@ -716,6 +716,9 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 			if p.TaskCounts, err = b.db.TodoCounts(ctx, k); err != nil {
 				log.Printf("open tasks: %v", err)
 			}
+			if p.TaskCats, err = b.db.TodoCategories(ctx, k); err != nil { // U4
+				log.Printf("task categories: %v", err)
+			}
 		}
 		for _, f := range states[k] { // K4
 			p.States = append(p.States, f.String())

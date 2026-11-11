@@ -30,10 +30,10 @@ func TestBacklogOwnership(t *testing.T) {
 	if _, err := s.UpdateTodo(ctx, "bob", a, TodoChange{Status: &done}); !errors.Is(err, ErrNotYourTodo) {
 		t.Fatalf("bob changed ann's task: %v", err)
 	}
-	if got, _ := s.ListTodos(ctx, "ann", "", "BRAKE", 10); len(got) != 1 || got[0].ID != a || got[0].Status != TodoBacklog {
+	if got, _ := s.ListTodos(ctx, "ann", "", "", "BRAKE", 10); len(got) != 1 || got[0].ID != a || got[0].Status != TodoBacklog {
 		t.Fatalf("search: %+v", got)
 	}
-	if got, _ := s.ListTodos(ctx, "", "", "", 10); len(got) != 0 {
+	if got, _ := s.ListTodos(ctx, "", "", "", "", 10); len(got) != 0 {
 		t.Fatalf("no owner sees nothing: %+v", got)
 	}
 	upd, err := s.UpdateTodo(ctx, "ann", a, TodoChange{Status: &done})
@@ -70,7 +70,7 @@ func TestBacklogOrder(t *testing.T) {
 	add("overdue", TodoOngoing, now.Add(-24*time.Hour))
 	add("backlog, due soon", TodoBacklog, now.Add(2*time.Hour))
 	want := []string{"overdue", "backlog, due soon", "backlog, due later", "ongoing, no due", "hold, no due", "backlog, no due", "done"}
-	got, _ := s.ListTodos(ctx, "ann", "", "", 20)
+	got, _ := s.ListTodos(ctx, "ann", "", "", "", 20)
 	if len(got) != len(want) {
 		t.Fatalf("got %d", len(got))
 	}
@@ -79,10 +79,10 @@ func TestBacklogOrder(t *testing.T) {
 			t.Fatalf("position %d: %q, want %q", i, td.Name, want[i])
 		}
 	}
-	if act, _ := s.ListTodos(ctx, "ann", TodoActive, "", 20); len(act) != 6 {
+	if act, _ := s.ListTodos(ctx, "ann", TodoActive, "", "", 20); len(act) != 6 {
 		t.Fatalf("active: %d", len(act))
 	}
-	if hold, _ := s.ListTodos(ctx, "ann", TodoHold, "", 20); len(hold) != 1 || hold[0].Name != "hold, no due" {
+	if hold, _ := s.ListTodos(ctx, "ann", TodoHold, "", "", 20); len(hold) != 1 || hold[0].Name != "hold, no due" {
 		t.Fatalf("hold: %+v", hold)
 	}
 }
@@ -95,7 +95,7 @@ func TestMigrateBacklogStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []string{"chat", "due_set_at", "reminded_due"} { // a table from before U3
+	for _, c := range []string{"chat", "due_set_at", "reminded_due", "category"} { // a table from before U3 and U4
 		if _, err := s.db.Exec(`ALTER TABLE backlog DROP COLUMN ` + c); err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestMigrateBacklogStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	got, _ := s.ListTodos(context.Background(), "ann", "", "", 10)
+	got, _ := s.ListTodos(context.Background(), "ann", "", "", "", 10)
 	have := map[string]string{}
 	for _, td := range got {
 		have[td.Name] = td.Status
@@ -184,5 +184,42 @@ func TestTodoRemindersDue(t *testing.T) {
 	}
 	if got, _ := s.TodoRemindersDue(ctx, later.Add(time.Minute)); len(got) != 0 {
 		t.Fatalf("past due: %+v", got)
+	}
+}
+
+// U4: free-text categories, lowercase, filterable, uncategorized by default.
+func TestBacklogCategory(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "b.db"), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	w, _ := s.AddTodo(ctx, Todo{Owner: "ann", Name: "Report", Category: "  Work "})
+	s.AddTodo(ctx, Todo{Owner: "ann", Name: "Deploy", Category: "work"})
+	h, _ := s.AddTodo(ctx, Todo{Owner: "ann", Name: "Paint"})
+	s.AddTodo(ctx, Todo{Owner: "bob", Name: "Bob's", Category: "secret"})
+	if got, _ := s.OwnTodo(ctx, "ann", w); got.Category != "work" {
+		t.Fatalf("not normalized: %q", got.Category)
+	}
+	if got, _ := s.ListTodos(ctx, "ann", "", "WORK", "", 10); len(got) != 2 {
+		t.Fatalf("work: %+v", got)
+	}
+	if got, _ := s.ListTodos(ctx, "ann", "", TodoNoCategory, "", 10); len(got) != 1 || got[0].ID != h {
+		t.Fatalf("none: %+v", got)
+	}
+	hobby := "Hobby"
+	if got, err := s.UpdateTodo(ctx, "ann", h, TodoChange{Category: &hobby}); err != nil || got.Category != "hobby" {
+		t.Fatalf("update: %+v %v", got, err)
+	}
+	if got, _ := s.OwnTodo(ctx, "ann", h); got.Category != "hobby" {
+		t.Fatalf("not stored: %q", got.Category)
+	}
+	if c, _ := s.TodoCategories(ctx, "ann"); len(c) != 2 || c[0] != "work" || c[1] != "hobby" {
+		t.Fatalf("categories: %v", c)
+	}
+	empty := ""
+	if got, _ := s.UpdateTodo(ctx, "ann", h, TodoChange{Category: &empty}); got.Category != "" {
+		t.Fatalf("clear: %q", got.Category)
 	}
 }

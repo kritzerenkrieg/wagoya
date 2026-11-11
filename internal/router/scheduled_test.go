@@ -34,10 +34,10 @@ func TestUnpinMentions(t *testing.T) {
 	}
 }
 
-// U1, U2: the requester's task counts per status nudge Rin to list_tasks.
+// U1, U2, U4: the requester's task counts per status and categories nudge Rin to list_tasks.
 func TestBacklogCountInPeople(t *testing.T) {
-	p := BuildPrompt(Prompt{People: []Person{{Handle: "P1", Name: "Ann", TaskCounts: map[string]int{"backlog": 9, "ongoing": 2}}, {Handle: "P2", Name: "Bob"}}, Requester: Line{SenderName: "Ann", Handle: "P1"}, Text: "hi"})
-	if !strings.Contains(p, "their tasks: 2 ongoing, 9 backlog; use list_tasks") || strings.Count(p, "their tasks:") != 1 {
+	p := BuildPrompt(Prompt{People: []Person{{Handle: "P1", Name: "Ann", TaskCounts: map[string]int{"backlog": 9, "ongoing": 2}, TaskCats: []string{"work", "hobby"}}, {Handle: "P2", Name: "Bob"}}, Requester: Line{SenderName: "Ann", Handle: "P1"}, Text: "hi"})
+	if !strings.Contains(p, "their tasks: 2 ongoing, 9 backlog (categories: work, hobby); use list_tasks") || strings.Count(p, "their tasks:") != 1 {
 		t.Fatalf("prompt:\n%s", p)
 	}
 }

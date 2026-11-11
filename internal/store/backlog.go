@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS backlog (
 	done_at INTEGER NOT NULL DEFAULT 0,
 	chat TEXT NOT NULL DEFAULT '',            -- U3: where it was added, for a reminder
 	due_set_at INTEGER NOT NULL DEFAULT 0,    -- U3: when the due time was last set
-	reminded_due INTEGER NOT NULL DEFAULT 0   -- U3: the due time a reminder went out for
+	reminded_due INTEGER NOT NULL DEFAULT 0,  -- U3: the due time a reminder went out for
+	category TEXT NOT NULL DEFAULT ''         -- U4: free text, lowercase ("work", "hobby"), '' for none
 );
 CREATE INDEX IF NOT EXISTS backlog_owner ON backlog(owner, status);
 `
@@ -56,6 +57,18 @@ func ValidTodoStatus(s string) bool {
 	return false
 }
 
+// TodoNoCategory is a ListTodos category filter: tasks without one (U4).
+const TodoNoCategory = "none"
+
+// MaxTodoCategory is the longest category, in runes.
+const MaxTodoCategory = 30
+
+// NormTodoCategory makes a category lowercase with single spaces (U4), so
+// "Work" and "work " are the same one.
+func NormTodoCategory(c string) string {
+	return strings.ToLower(strings.Join(strings.Fields(c), " "))
+}
+
 // ErrNotYourTodo is returned for a task that doesn't exist or isn't the
 // caller's; the two look the same, so nobody learns of others' tasks.
 var ErrNotYourTodo = errors.New("no such task of yours")
@@ -75,6 +88,7 @@ type Todo struct {
 	Chat        string    // chat it was added in (U3)
 	DueSet      time.Time // when Due was last set (U3); zero if never or unknown
 	RemindedDue time.Time // the due time a reminder was sent for (U3)
+	Category    string    // U4: "" for none
 }
 
 // RemindAt is when a task's reminder goes out (U3): 09:00 the day before
@@ -97,12 +111,12 @@ func (t Todo) RemindAt() time.Time {
 // TodoChange is an update; nil fields stay as they are. ClearDue removes
 // the due time.
 type TodoChange struct {
-	Name, Description, Status *string
-	Due                       *time.Time
-	ClearDue                  bool
+	Name, Description, Status, Category *string
+	Due                                 *time.Time
+	ClearDue                            bool
 }
 
-const todoCols = `id, owner, name, description, due_at, status, source, created_at, updated_at, done_at, chat, due_set_at, reminded_due`
+const todoCols = `id, owner, name, description, due_at, status, source, created_at, updated_at, done_at, chat, due_set_at, reminded_due, category`
 
 func unixOrZero(t time.Time) int64 {
 	if t.IsZero() {
@@ -128,7 +142,7 @@ func (s *Store) todos(ctx context.Context, q string, args ...any) ([]Todo, error
 	for rows.Next() {
 		var t Todo
 		var due, created, updated, done, dueSet, reminded int64
-		if err := rows.Scan(&t.ID, &t.Owner, &t.Name, &t.Description, &due, &t.Status, &t.Source, &created, &updated, &done, &t.Chat, &dueSet, &reminded); err != nil {
+		if err := rows.Scan(&t.ID, &t.Owner, &t.Name, &t.Description, &due, &t.Status, &t.Source, &created, &updated, &done, &t.Chat, &dueSet, &reminded, &t.Category); err != nil {
 			return nil, err
 		}
 		t.DueSet, t.RemindedDue = timeOrZero(dueSet), timeOrZero(reminded)
@@ -147,6 +161,7 @@ func (s *Store) AddTodo(ctx context.Context, t Todo) (int64, error) {
 	if t.Status == "" {
 		t.Status = TodoBacklog
 	}
+	t.Category = NormTodoCategory(t.Category)
 	now := s.now()
 	if t.Created.IsZero() {
 		t.Created = now
@@ -157,9 +172,9 @@ func (s *Store) AddTodo(ctx context.Context, t Todo) (int64, error) {
 	if !t.Due.IsZero() && t.DueSet.IsZero() {
 		t.DueSet = now
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO backlog(owner, name, description, due_at, status, source, created_at, updated_at, done_at, chat, due_set_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`, t.Owner, t.Name, t.Description, unixOrZero(t.Due), t.Status, t.Source,
-		t.Created.Unix(), now.Unix(), unixOrZero(t.Done), t.Chat, unixOrZero(t.DueSet))
+	res, err := s.db.ExecContext(ctx, `INSERT INTO backlog(owner, name, description, due_at, status, source, created_at, updated_at, done_at, chat, due_set_at, category)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, t.Owner, t.Name, t.Description, unixOrZero(t.Due), t.Status, t.Source,
+		t.Created.Unix(), now.Unix(), unixOrZero(t.Done), t.Chat, unixOrZero(t.DueSet), t.Category)
 	if err != nil {
 		return 0, err
 	}
@@ -190,6 +205,9 @@ func (s *Store) UpdateTodo(ctx context.Context, owner string, id int64, c TodoCh
 	if c.Description != nil {
 		t.Description = *c.Description
 	}
+	if c.Category != nil {
+		t.Category = NormTodoCategory(*c.Category)
+	}
 	now := s.now()
 	if c.Due != nil && !c.Due.Equal(t.Due) {
 		t.Due, t.DueSet = *c.Due, now // U3: a new due time gets its own reminder
@@ -204,18 +222,19 @@ func (s *Store) UpdateTodo(ctx context.Context, owner string, id int64, c TodoCh
 			t.Done = now
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE backlog SET name = ?, description = ?, due_at = ?, status = ?, updated_at = ?, done_at = ?, due_set_at = ?
-		WHERE id = ? AND owner = ?`, t.Name, t.Description, unixOrZero(t.Due), t.Status, now.Unix(), unixOrZero(t.Done), unixOrZero(t.DueSet), id, owner)
+	_, err = s.db.ExecContext(ctx, `UPDATE backlog SET name = ?, description = ?, due_at = ?, status = ?, updated_at = ?, done_at = ?, due_set_at = ?, category = ?
+		WHERE id = ? AND owner = ?`, t.Name, t.Description, unixOrZero(t.Due), t.Status, now.Unix(), unixOrZero(t.Done), unixOrZero(t.DueSet), t.Category, id, owner)
 	t.Updated = now
 	return t, err
 }
 
 // ListTodos returns owner's tasks with status (a status, TodoActive for
-// all but done, or "" for any), whose name or description contains query
+// all but done, or "" for any) and category (U4: a category, TodoNoCategory
+// for none, or "" for any), whose name or description contains query
 // (any case; "" for all). U2: by due time, soonest first and none last,
 // then ongoing, hold, backlog, then newest; done ones last, most recently
 // done first.
-func (s *Store) ListTodos(ctx context.Context, owner, status, query string, limit int) ([]Todo, error) {
+func (s *Store) ListTodos(ctx context.Context, owner, status, category, query string, limit int) ([]Todo, error) {
 	if owner == "" {
 		return nil, nil
 	}
@@ -228,6 +247,14 @@ func (s *Store) ListTodos(ctx context.Context, owner, status, query string, limi
 	default:
 		q += ` AND status = ?`
 		args = append(args, status)
+	}
+	switch category = NormTodoCategory(category); category {
+	case "":
+	case TodoNoCategory:
+		q += ` AND category = ''`
+	default:
+		q += ` AND category = ?`
+		args = append(args, category)
 	}
 	if query = strings.TrimSpace(query); query != "" {
 		like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(query)) + "%"
@@ -259,16 +286,37 @@ func (s *Store) TodoCounts(ctx context.Context, owner string) (map[string]int, e
 	return out, rows.Err()
 }
 
+// TodoCategories is owner's categories in use, most used first (U4), so
+// Rin reuses them instead of making near-duplicates.
+func (s *Store) TodoCategories(ctx context.Context, owner string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT category FROM backlog WHERE owner = ? AND category != ''
+		GROUP BY category ORDER BY count(*) DESC, category LIMIT 20`, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 var statusPrefix = regexp.MustCompile(`(?i)^\s*\[(ongoing|on hold|hold|backlog)\]\s*`)
 
 // migrateBacklog moves tasks from before U2 to the new statuses: open
 // becomes backlog, and a "[Ongoing]"-style tag at the start of a name
 // becomes the status.
 func migrateBacklog(db *sql.DB) error {
-	for _, c := range [][2]string{ // U3
+	for _, c := range [][2]string{ // U3, U4
 		{"chat", "TEXT NOT NULL DEFAULT ''"},
 		{"due_set_at", "INTEGER NOT NULL DEFAULT 0"},
 		{"reminded_due", "INTEGER NOT NULL DEFAULT 0"},
+		{"category", "TEXT NOT NULL DEFAULT ''"}, // U4
 	} {
 		var n int
 		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('backlog') WHERE name = ?`, c[0]).Scan(&n); err != nil {
