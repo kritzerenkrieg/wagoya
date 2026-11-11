@@ -32,3 +32,11 @@ func TestUnpinMentions(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// U1: the requester's open-task count nudges Rin to list_tasks.
+func TestBacklogCountInPeople(t *testing.T) {
+	p := BuildPrompt(Prompt{People: []Person{{Handle: "P1", Name: "Ann", OpenTasks: 3}, {Handle: "P2", Name: "Bob"}}, Requester: Line{SenderName: "Ann", Handle: "P1"}, Text: "hi"})
+	if !strings.Contains(p, "backlog: 3 open tasks of theirs, use list_tasks") || strings.Count(p, "backlog:") != 1 {
+		t.Fatalf("prompt:\n%s", p)
+	}
+}

@@ -86,6 +86,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "backlog" { // U1: Vikunja import
+		if err := backlogCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "backlog:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := config.LoadDotEnv(".env"); err != nil {
 		log.Fatalf("read .env: %v", err)
 	}
@@ -576,7 +583,7 @@ func (b *bot) onMessage(e *events.Message) {
 	for _, l := range history {
 		turn.Spoke[l.Handle] = true
 	}
-	toolset := append(turn.Tools(), turn.ScheduleTools()...)
+	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), turn.BacklogTools()...) // U1
 	switch {
 	case line.Whitelisted && b.httpOwner.Load() != nil: // I4: stored keys are owner-only
 		toolset = append(toolset, *b.httpOwner.Load())
@@ -710,6 +717,11 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 		if h == req.Handle && b.claude.SupportsTools() {
 			if p.Preferences, err = b.db.Preferences(ctx, k); err != nil {
 				log.Printf("preferences: %v", err)
+			}
+		}
+		if h == req.Handle && b.claude.SupportsTools() { // U1: a nudge to list_tasks
+			if p.OpenTasks, err = b.db.CountOpenTodos(ctx, k); err != nil {
+				log.Printf("open tasks: %v", err)
 			}
 		}
 		for _, f := range states[k] { // K4

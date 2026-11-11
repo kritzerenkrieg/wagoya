@@ -124,7 +124,7 @@ func Open(path string, historyLimit int) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + jobsSchema + vectorsSchema + reactionsSchema + mutesSchema + tasksSchema); err != nil {
+	if _, err := db.Exec(schema + jobsSchema + vectorsSchema + reactionsSchema + mutesSchema + tasksSchema + backlogSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
