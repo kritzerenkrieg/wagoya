@@ -51,19 +51,20 @@ func (t *Turn) reqKey() string { return t.Handles[t.Requester.Handle] }
 
 // Tools returns the memory tools for a reply.
 func (t *Turn) Tools() []llm.Tool {
-	return []llm.Tool{llm.FactSearchTool(t.Search()), t.saveFactTool(), t.invalidateTool(), t.saveMemoryTool(), t.chatHistoryTool()}
+	return []llm.Tool{llm.FactSearchTool(t.Search()), t.readProfileTool(), t.saveFactTool(), t.invalidateTool(), t.saveMemoryTool(), t.chatHistoryTool()}
 }
 
-// ReadTools returns the memory tools that only read: search_facts and
-// chat_history, for writing a due scheduled message (T1).
+// ReadTools returns the memory tools that only read: search_facts,
+// read_profile and chat_history, for writing a due scheduled message (T1).
 func (t *Turn) ReadTools() []llm.Tool {
-	return []llm.Tool{llm.FactSearchTool(t.Search()), t.chatHistoryTool()}
+	return []llm.Tool{llm.FactSearchTool(t.Search()), t.readProfileTool(), t.chatHistoryTool()}
 }
 
-// CuratorTools returns the tools for a curator pass: save_fact only.
+// CuratorTools returns the tools for a curator pass: save_fact and
+// update_profile (V1).
 func (t *Turn) CuratorTools() []llm.Tool {
 	t.Curator = true
-	return []llm.Tool{t.saveFactTool()}
+	return []llm.Tool{t.saveFactTool(), t.updateProfileTool()}
 }
 
 // label names a fact's owner for the model: their handle if they are in the

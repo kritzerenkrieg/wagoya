@@ -236,7 +236,7 @@ func (b *bot) onEvent(evt any) {
 			b.resolveWhitelist()
 			b.auditGroups()
 			b.guessMerges()
-			b.schedOnce.Do(func() { go b.runScheduler(); go b.runTasks() })
+			b.schedOnce.Do(func() { go b.runScheduler(); go b.runTasks(); go b.backfillProfiles() }) // V1: backfill
 		}()
 	case *events.JoinedGroup:
 		go b.onJoined(e)
@@ -685,8 +685,12 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	var facts map[string][]string
 	var counts map[string]int
 	var err error
+	var profiles map[string]bool
 	if b.claude.SupportsTools() {
 		counts, err = b.db.FactCounts(ctx, keys)
+		if err == nil {
+			profiles, err = b.db.HasProfiles(ctx, keys) // V1
+		}
 	} else {
 		facts, err = b.db.PersonFacts(ctx, keys)
 	}
@@ -704,7 +708,7 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	out := make([]router.Person, 0, len(keys))
 	for i, k := range keys { // keys[0] is the requester
 		h := order[i]
-		p := router.Person{Handle: h, Name: names[h], Whitelisted: wl[h], Facts: facts[k], FactCount: counts[k]}
+		p := router.Person{Handle: h, Name: names[h], Whitelisted: wl[h], Facts: facts[k], FactCount: counts[k], HasProfile: profiles[k]}
 		// K1: the requester's standing preferences go in every prompt, even
 		// when the other facts are only searchable (D7).
 		if h == req.Handle && b.claude.SupportsTools() {
@@ -1421,7 +1425,15 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		if len(f) > 40 { // newest 40 are enough to avoid repeats
 			f = f[len(f)-40:]
 		}
-		people = append(people, router.Person{Handle: h, Name: name, Facts: f})
+		prof, err := b.db.GetProfile(ctx, k) // V1: the curator decides whether to rewrite it
+		if err != nil {
+			log.Printf("curator: profile: %v", err)
+		}
+		people = append(people, router.Person{Handle: h, Name: name, Facts: f, Profile: prof.Text})
+	}
+	names := map[string]string{}
+	for _, p := range people {
+		names[p.Handle] = p.Name
 	}
 	old, err := b.db.Summary(ctx, chat)
 	if err != nil {
@@ -1431,7 +1443,7 @@ func (b *bot) curate(chat string, lines []router.Line) {
 	var saved int
 	var out string
 	if b.curator.SupportsTools() { // J3: the curator saves with the same checked tool
-		turn := &memtools.Turn{DB: b.db, Chat: chat, Handles: handles, AfterSave: b.kickEmbedder}
+		turn := &memtools.Turn{DB: b.db, Chat: chat, Handles: handles, Names: names, AfterSave: b.kickEmbedder}
 		var st llm.Stats
 		out, err = b.curator.Reply(llm.WithStats(ctx, &st), router.CuratorSystemTools, prompt, nil, turn.CuratorTools())
 		b.account("curator "+chat, st)
@@ -1448,10 +1460,6 @@ func (b *bot) curate(chat string, lines []router.Line) {
 		saved = b.curateTags(ctx, chat, handles, router.ParseCurator(out))
 	}
 	// J8: the same pass rewrites the chat's rolling summary.
-	names := map[string]string{}
-	for _, p := range people {
-		names[p.Handle] = p.Name
-	}
 	summary := router.ParseSummaryFor(out, names) // K6: no per-prompt handles kept
 	if summary != "" {
 		if err := b.db.SetSummary(ctx, chat, summary); err != nil {

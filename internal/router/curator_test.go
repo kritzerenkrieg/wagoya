@@ -76,3 +76,23 @@ func TestStripHandles(t *testing.T) {
 		t.Errorf("ParseSummaryFor = %q", got)
 	}
 }
+
+// V1: the curator sees a profile; a backfill reply is parsed, capped and cleaned.
+func TestProfilePromptAndParse(t *testing.T) {
+	p := CuratorPrompt([]Person{{Handle: "P1", Name: "John", Profile: "John is a\nquiet engineer.", Facts: []string{"Job: engineer"}}, {Handle: "P2", Name: "Yan", Profile: "Yan jokes a lot."}}, nil, "")
+	if !strings.Contains(p, "P1 John:\n  profile: John is a quiet engineer.\n  - Job: engineer\n") || !strings.Contains(p, "P2 Yan:\n  profile: Yan jokes a lot.\n") {
+		t.Fatalf("prompt:\n%s", p)
+	}
+	if got := ParseProfile("noise <profile>\nJohn (P1) builds bridges.\n</profile>", 400); got != "John builds bridges." {
+		t.Fatalf("parse: %q", got)
+	}
+	if got := ParseProfile("<profile>"+strings.Repeat("w ", 10)+"</profile>", 4); got != "w w w w …" {
+		t.Fatalf("cap: %q", got)
+	}
+	if got := ParseProfile("no tag", 400); got != "" {
+		t.Fatalf("no tag: %q", got)
+	}
+	if !strings.Contains(BuildPrompt(Prompt{People: []Person{{Handle: "P1", Name: "Ann", FactCount: 3, HasProfile: true}}, Requester: Line{Handle: "P1"}}), "P1 Ann (whitelisted=\"no\"): a profile (who they are: read_profile) and 3 stored facts") {
+		t.Fatal("people line")
+	}
+}

@@ -202,6 +202,13 @@ flowchart LR
 - [ ] Reminder before a task is due (U3). Done when: store tests cover the reminder time (day before at 09:00, an hour before, none), once per due time, re-arming on a new due time and the column migration; the router test covers the fallback text; and live, a task due tomorrow gets a DM reminder at 09:00 in Rin's words.
 - [ ] Task category (U4). Done when: store tests cover the column migration, lowercase storage, filtering by a category or none, and the categories in use; memtools tests cover setting, clearing and filtering, and that another person sees none of them; and live, "show my work tasks" lists only work tasks.
 
+## Phase V: Person profiles
+
+**Goal:** Rin's understanding of a person grows with every chat, not just the recent transcript.
+**Exit:** a week in which Rin answers personal questions in line with who people are, and profiles change only with logged reasons.
+
+- [ ] Profiles written by the curator, read by Rin (V1). Done when: store tests cover replacing, the backfill list and merging; memtools tests cover the reason requirement, the 400-word cap, handles removed, and reading by handle or name; router tests cover the curator prompt, the backfill parse and the `<people>` line; and live, after deploy the backfill writes profiles for people with 5+ facts, curator logs show profile rewrites with reasons (not every pass), and "what do you think of me?" makes Rin call `read_profile`.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

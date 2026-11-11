@@ -645,6 +645,9 @@ func (s *Store) MergePerson(ctx context.Context, from, to string) (bool, error) 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM person_facts WHERE person = ?`, from); err != nil {
 		return false, err
 	}
+	if err := mergeProfile(ctx, tx, from, to); err != nil { // V1
+		return false, err
+	}
 	return true, tx.Commit()
 }
 
