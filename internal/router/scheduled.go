@@ -3,6 +3,7 @@ package router
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ScheduledRequest is the request text for writing a due scheduled message
@@ -26,4 +27,27 @@ func ScheduledRequest(brief, repeat string, sent []string) string {
 		}
 	}
 	return b.String()
+}
+
+// TaskReminderBrief is the brief for a task's reminder (U3), sent as written
+// if the run can't write it fresh. In a DM it speaks to the owner; in a
+// group it tags them by key (L10).
+func TaskReminderBrief(name, desc string, due, now time.Time, dm bool, owner string) string {
+	when := due.Format("Mon 2 Jan 15:04")
+	day := func(t time.Time) string { return t.Format("2006-01-02") }
+	switch day(due) {
+	case day(now):
+		when = "today at " + due.Format("15:04")
+	case day(now.AddDate(0, 0, 1)):
+		when = "tomorrow at " + due.Format("15:04")
+	}
+	name = strings.ReplaceAll(oneLine(name), "@{", "@ {")
+	out := fmt.Sprintf("Reminder: your task \"%s\" is due %s.", capRunes(name, 200), when)
+	if d := strings.ReplaceAll(oneLine(desc), "@{", "@ {"); d != "" {
+		out += " (" + capRunes(d, 200) + ")"
+	}
+	if !dm {
+		out = "@{" + owner + "} " + out
+	}
+	return out
 }

@@ -95,6 +95,11 @@ func TestMigrateBacklogStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, c := range []string{"chat", "due_set_at", "reminded_due"} { // a table from before U3
+		if _, err := s.db.Exec(`ALTER TABLE backlog DROP COLUMN ` + c); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, n := range []string{"[Ongoing] Setup camera", "[on hold] Trip", "Plain", "[Ongoing]"} {
 		if _, err := s.db.Exec(`INSERT INTO backlog(owner, name, status, created_at, updated_at) VALUES ('ann', ?, 'open', 1, 1)`, n); err != nil {
 			t.Fatal(err)
@@ -115,5 +120,69 @@ func TestMigrateBacklogStatus(t *testing.T) {
 		if have[n] != st {
 			t.Errorf("%q: %q, want %q (all: %v)", n, have[n], st, have)
 		}
+	}
+}
+
+// U3: 09:00 the day before, or an hour before if that had passed when the
+// due time was set, or none.
+func TestTodoRemindAt(t *testing.T) {
+	due := time.Date(2026, 11, 13, 18, 0, 0, 0, time.Local)
+	dayBefore := time.Date(2026, 11, 12, 9, 0, 0, 0, time.Local)
+	cases := []struct {
+		set  time.Time
+		want time.Time
+	}{
+		{time.Time{}, dayBefore},
+		{dayBefore.Add(-time.Minute), dayBefore},
+		{dayBefore.Add(time.Minute), due.Add(-time.Hour)},
+		{due.Add(-30 * time.Minute), time.Time{}},
+	}
+	for _, c := range cases {
+		if got := (Todo{Due: due, DueSet: c.set}).RemindAt(); !got.Equal(c.want) {
+			t.Errorf("set %v: %v, want %v", c.set, got, c.want)
+		}
+	}
+	if !(Todo{}).RemindAt().IsZero() {
+		t.Error("no due time, no reminder")
+	}
+}
+
+// U3: a due reminder is found once; a new due time arms it again; done
+// tasks and other owners' tasks don't mix.
+func TestTodoRemindersDue(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "b.db"), 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	real := time.Now()
+	due := real.Add(72 * time.Hour)
+	id, _ := s.AddTodo(ctx, Todo{Owner: "ann", Name: "Ship", Due: due, Chat: "g@g.us"})
+	s.AddTodo(ctx, Todo{Owner: "ann", Name: "Done one", Due: due, Status: TodoDone})
+	td, _ := s.OwnTodo(ctx, "ann", id)
+	at := td.RemindAt()
+	if at.IsZero() || td.Chat != "g@g.us" {
+		t.Fatalf("remind at %v, chat %q", at, td.Chat)
+	}
+	if got, _ := s.TodoRemindersDue(ctx, at.Add(-time.Minute)); len(got) != 0 {
+		t.Fatalf("early: %+v", got)
+	}
+	got, _ := s.TodoRemindersDue(ctx, at)
+	if len(got) != 1 || got[0].ID != id {
+		t.Fatalf("due: %+v", got)
+	}
+	s.MarkTodoReminded(ctx, id, got[0].Due)
+	if got, _ := s.TodoRemindersDue(ctx, at); len(got) != 0 {
+		t.Fatalf("sent twice: %+v", got)
+	}
+	later := due.Add(72 * time.Hour)
+	s.UpdateTodo(ctx, "ann", id, TodoChange{Due: &later})
+	td, _ = s.OwnTodo(ctx, "ann", id)
+	if got, _ := s.TodoRemindersDue(ctx, td.RemindAt()); len(got) != 1 {
+		t.Fatalf("new due time not armed: %+v", got)
+	}
+	if got, _ := s.TodoRemindersDue(ctx, later.Add(time.Minute)); len(got) != 0 {
+		t.Fatalf("past due: %+v", got)
 	}
 }

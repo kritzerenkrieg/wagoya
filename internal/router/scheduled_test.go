@@ -3,6 +3,7 @@ package router
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // T1: the run sees the brief, the repeat and earlier sends; a one-off has no
@@ -38,5 +39,17 @@ func TestBacklogCountInPeople(t *testing.T) {
 	p := BuildPrompt(Prompt{People: []Person{{Handle: "P1", Name: "Ann", TaskCounts: map[string]int{"backlog": 9, "ongoing": 2}}, {Handle: "P2", Name: "Bob"}}, Requester: Line{SenderName: "Ann", Handle: "P1"}, Text: "hi"})
 	if !strings.Contains(p, "their tasks: 2 ongoing, 9 backlog; use list_tasks") || strings.Count(p, "their tasks:") != 1 {
 		t.Fatalf("prompt:\n%s", p)
+	}
+}
+
+// U3: the fallback reminder speaks to the owner in a DM and tags them in a group.
+func TestTaskReminderBrief(t *testing.T) {
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, time.Local)
+	due := time.Date(2026, 11, 12, 18, 0, 0, 0, time.Local)
+	if got := TaskReminderBrief("Ship demo", "itch.io", due, now, true, "lid1"); got != `Reminder: your task "Ship demo" is due tomorrow at 18:00. (itch.io)` {
+		t.Fatalf("dm: %q", got)
+	}
+	if got := TaskReminderBrief("Ship @{x}", "", due.Add(-24*time.Hour), now, false, "lid1"); got != `@{lid1} Reminder: your task "Ship @ {x}" is due today at 18:00.` {
+		t.Fatalf("group: %q", got)
 	}
 }

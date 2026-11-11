@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS backlog (
 	source TEXT NOT NULL DEFAULT '',     -- where a task came from, if not Rin
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
-	done_at INTEGER NOT NULL DEFAULT 0
+	done_at INTEGER NOT NULL DEFAULT 0,
+	chat TEXT NOT NULL DEFAULT '',            -- U3: where it was added, for a reminder
+	due_set_at INTEGER NOT NULL DEFAULT 0,    -- U3: when the due time was last set
+	reminded_due INTEGER NOT NULL DEFAULT 0   -- U3: the due time a reminder went out for
 );
 CREATE INDEX IF NOT EXISTS backlog_owner ON backlog(owner, status);
 `
@@ -69,6 +72,26 @@ type Todo struct {
 	Created     time.Time
 	Updated     time.Time
 	Done        time.Time // zero unless done
+	Chat        string    // chat it was added in (U3)
+	DueSet      time.Time // when Due was last set (U3); zero if never or unknown
+	RemindedDue time.Time // the due time a reminder was sent for (U3)
+}
+
+// RemindAt is when a task's reminder goes out (U3): 09:00 the day before
+// it is due, or an hour before if that had passed when the due time was
+// set, or zero for none (no due time, or under an hour's notice).
+func (t Todo) RemindAt() time.Time {
+	if t.Due.IsZero() {
+		return time.Time{}
+	}
+	d := t.Due.Local()
+	if r := time.Date(d.Year(), d.Month(), d.Day()-1, 9, 0, 0, 0, d.Location()); t.DueSet.IsZero() || t.DueSet.Before(r) {
+		return r
+	}
+	if h := t.Due.Add(-time.Hour); t.DueSet.Before(h) {
+		return h
+	}
+	return time.Time{}
 }
 
 // TodoChange is an update; nil fields stay as they are. ClearDue removes
@@ -79,7 +102,7 @@ type TodoChange struct {
 	ClearDue                  bool
 }
 
-const todoCols = `id, owner, name, description, due_at, status, source, created_at, updated_at, done_at`
+const todoCols = `id, owner, name, description, due_at, status, source, created_at, updated_at, done_at, chat, due_set_at, reminded_due`
 
 func unixOrZero(t time.Time) int64 {
 	if t.IsZero() {
@@ -104,10 +127,11 @@ func (s *Store) todos(ctx context.Context, q string, args ...any) ([]Todo, error
 	var out []Todo
 	for rows.Next() {
 		var t Todo
-		var due, created, updated, done int64
-		if err := rows.Scan(&t.ID, &t.Owner, &t.Name, &t.Description, &due, &t.Status, &t.Source, &created, &updated, &done); err != nil {
+		var due, created, updated, done, dueSet, reminded int64
+		if err := rows.Scan(&t.ID, &t.Owner, &t.Name, &t.Description, &due, &t.Status, &t.Source, &created, &updated, &done, &t.Chat, &dueSet, &reminded); err != nil {
 			return nil, err
 		}
+		t.DueSet, t.RemindedDue = timeOrZero(dueSet), timeOrZero(reminded)
 		t.Due, t.Created, t.Updated, t.Done = timeOrZero(due), time.Unix(created, 0), time.Unix(updated, 0), timeOrZero(done)
 		out = append(out, t)
 	}
@@ -130,9 +154,12 @@ func (s *Store) AddTodo(ctx context.Context, t Todo) (int64, error) {
 	if t.Status == TodoDone && t.Done.IsZero() {
 		t.Done = now
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO backlog(owner, name, description, due_at, status, source, created_at, updated_at, done_at)
-		VALUES (?,?,?,?,?,?,?,?,?)`, t.Owner, t.Name, t.Description, unixOrZero(t.Due), t.Status, t.Source,
-		t.Created.Unix(), now.Unix(), unixOrZero(t.Done))
+	if !t.Due.IsZero() && t.DueSet.IsZero() {
+		t.DueSet = now
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO backlog(owner, name, description, due_at, status, source, created_at, updated_at, done_at, chat, due_set_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`, t.Owner, t.Name, t.Description, unixOrZero(t.Due), t.Status, t.Source,
+		t.Created.Unix(), now.Unix(), unixOrZero(t.Done), t.Chat, unixOrZero(t.DueSet))
 	if err != nil {
 		return 0, err
 	}
@@ -163,13 +190,13 @@ func (s *Store) UpdateTodo(ctx context.Context, owner string, id int64, c TodoCh
 	if c.Description != nil {
 		t.Description = *c.Description
 	}
-	if c.Due != nil {
-		t.Due = *c.Due
+	now := s.now()
+	if c.Due != nil && !c.Due.Equal(t.Due) {
+		t.Due, t.DueSet = *c.Due, now // U3: a new due time gets its own reminder
 	}
 	if c.ClearDue {
 		t.Due = time.Time{}
 	}
-	now := s.now()
 	if c.Status != nil && *c.Status != t.Status {
 		t.Status = *c.Status
 		t.Done = time.Time{}
@@ -177,8 +204,8 @@ func (s *Store) UpdateTodo(ctx context.Context, owner string, id int64, c TodoCh
 			t.Done = now
 		}
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE backlog SET name = ?, description = ?, due_at = ?, status = ?, updated_at = ?, done_at = ?
-		WHERE id = ? AND owner = ?`, t.Name, t.Description, unixOrZero(t.Due), t.Status, now.Unix(), unixOrZero(t.Done), id, owner)
+	_, err = s.db.ExecContext(ctx, `UPDATE backlog SET name = ?, description = ?, due_at = ?, status = ?, updated_at = ?, done_at = ?, due_set_at = ?
+		WHERE id = ? AND owner = ?`, t.Name, t.Description, unixOrZero(t.Due), t.Status, now.Unix(), unixOrZero(t.Done), unixOrZero(t.DueSet), id, owner)
 	t.Updated = now
 	return t, err
 }
@@ -238,6 +265,21 @@ var statusPrefix = regexp.MustCompile(`(?i)^\s*\[(ongoing|on hold|hold|backlog)\
 // becomes backlog, and a "[Ongoing]"-style tag at the start of a name
 // becomes the status.
 func migrateBacklog(db *sql.DB) error {
+	for _, c := range [][2]string{ // U3
+		{"chat", "TEXT NOT NULL DEFAULT ''"},
+		{"due_set_at", "INTEGER NOT NULL DEFAULT 0"},
+		{"reminded_due", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('backlog') WHERE name = ?`, c[0]).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE backlog ADD COLUMN ` + c[0] + ` ` + c[1]); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err := db.Exec(`UPDATE backlog SET status = 'backlog' WHERE status = 'open'`); err != nil {
 		return err
 	}
@@ -274,4 +316,40 @@ func migrateBacklog(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// TodoRemindersDue returns the tasks whose reminder time has come (U3):
+// not done, not yet due, and not reminded for this due time.
+func (s *Store) TodoRemindersDue(ctx context.Context, now time.Time) ([]Todo, error) {
+	got, err := s.todos(ctx, `WHERE status != 'done' AND due_at > ? AND reminded_due != due_at`, now.Unix())
+	if err != nil {
+		return nil, err
+	}
+	out := got[:0]
+	for _, t := range got {
+		if r := t.RemindAt(); !r.IsZero() && !r.After(now) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// MarkTodoReminded records that the reminder for task id's due time went
+// out, so it is sent once.
+func (s *Store) MarkTodoReminded(ctx context.Context, id int64, due time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE backlog SET reminded_due = ? WHERE id = ?`, due.Unix(), id)
+	return err
+}
+
+// PersonAccount returns a profile's LID and number (U3: to reach their DM).
+func (s *Store) PersonAccount(ctx context.Context, key string) (Account, error) {
+	a := Account{Key: key}
+	err := s.db.QueryRowContext(ctx, `SELECT name, lid, pn FROM people WHERE key = ?`, key).Scan(&a.Name, &a.LID, &a.PN)
+	if errors.Is(err, sql.ErrNoRows) {
+		if pn, ok := strings.CutPrefix(key, "pn:"); ok {
+			a.PN = pn
+		}
+		return a, nil
+	}
+	return a, err
 }

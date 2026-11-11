@@ -57,7 +57,7 @@ func (t *Turn) addTaskTool() llm.Tool {
 		Name: "add_task",
 		Description: "Add a task to the requester's own backlog (todo list): something they want to do, track or not forget. " +
 			"This is the only place tasks, todos, chores and backlog items go: never save them as facts or memories. " +
-			"Tasks are the requester's own; you can't add one for someone else. Only say it is added if this returned added.",
+			"Tasks are the requester's own; you can't add one for someone else. A task with a due time gets an automatic reminder (09:00 the day before, or an hour before if that has passed); don't also schedule_message one for it unless asked. Only say it is added if this returned added.",
 		Schema: map[string]any{"type": "object", "required": []string{"name"}, "properties": map[string]any{
 			"name":        map[string]any{"type": "string", "description": "Short task name, under 200 characters."},
 			"description": map[string]any{"type": "string", "description": "Optional details."},
@@ -80,7 +80,7 @@ func (t *Turn) addTaskTool() llm.Tool {
 			if err != nil {
 				return errText(err)
 			}
-			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description, Status: st}
+			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description, Status: st, Chat: t.Chat}
 			if in.Due != "" {
 				var err error
 				if td.Due, err = t.parseDue(in.Due); err != nil {
@@ -252,6 +252,14 @@ func (t *Turn) taskLine(td store.Todo) string {
 			}
 		}
 		due = fmt.Sprintf("due %s (%s)", td.Due.In(now.Location()).Format("Mon 2006-01-02 15:04"), when)
+		if td.Status != store.TodoDone { // U3
+			switch r := td.RemindAt(); {
+			case td.RemindedDue.Equal(td.Due):
+				due += ", reminder sent"
+			case !r.IsZero() && r.After(now):
+				due += ", reminder " + r.In(now.Location()).Format("Mon 15:04")
+			}
+		}
 	}
 	status := td.Status
 	if td.Status == store.TodoDone && !td.Done.IsZero() {

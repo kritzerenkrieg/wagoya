@@ -1023,7 +1023,54 @@ func (b *bot) runScheduler() {
 	)
 	for {
 		b.runDue(time.Now(), oneOffGrace, repeatGrace)
+		b.runTaskReminders(time.Now()) // U3
 		time.Sleep(tick)
+	}
+}
+
+// runTaskReminders reminds owners of tasks coming due (U3). Code decides
+// when (store.Todo.RemindAt); the message is written now, like a scheduled
+// one (T1). It goes to the owner's DM if they may DM the bot (B3), else to
+// the chat the task was added in, tagging them.
+func (b *bot) runTaskReminders(now time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	due, err := b.db.TodoRemindersDue(ctx, now)
+	if err != nil {
+		log.Printf("task reminders: %v", err)
+		return
+	}
+	for _, td := range due {
+		// Marked first: a reminder goes out at most once per due time.
+		if err := b.db.MarkTodoReminded(ctx, td.ID, td.Due); err != nil {
+			log.Printf("task reminders: task %d: %v", td.ID, err)
+			continue
+		}
+		acct, err := b.db.PersonAccount(ctx, td.Owner)
+		if err != nil {
+			log.Printf("task reminders: task %d: %v", td.ID, err)
+			continue
+		}
+		var chat types.JID
+		dm := b.allowed(acct.LID, acct.PN)
+		switch {
+		case dm && acct.PN != "":
+			chat = types.NewJID(acct.PN, types.DefaultUserServer)
+		case dm && acct.LID != "":
+			chat = types.NewJID(acct.LID, types.HiddenUserServer)
+		case td.Chat != "":
+			dm = false
+			if chat, err = types.ParseJID(td.Chat); err != nil {
+				log.Printf("task reminders: task %d: bad chat", td.ID)
+				continue
+			}
+		default:
+			log.Printf("task reminders: task %d: nowhere to send", td.ID)
+			continue
+		}
+		brief := router.TaskReminderBrief(td.Name, td.Description, td.Due, now, dm, td.Owner)
+		log.Printf("task reminders: task %d due %s", td.ID, td.Due.Format(time.RFC3339))
+		b.sendJob(ctx, store.Job{Chat: chat.String(), CreatedBy: td.Owner, CreatedName: acct.Name, Text: brief}, chat)
 	}
 }
 

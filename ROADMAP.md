@@ -199,6 +199,7 @@ flowchart LR
 
 - [ ] Backlog table and tools (U1). Done when: store tests cover ownership and search; memtools tests show one person can't list or change another's task; the router test shows the counts; and live, "what are my tasks?" from the owner is answered with `list_tasks`, and another member asking for the owner's tasks is told only the owner can ask.
 - [ ] Task status and order (U2). Done when: store tests cover the order (due time, then ongoing, hold, backlog, done last) and the migration of "[Ongoing]" names; memtools tests cover setting and filtering by status; and live, after deploy the owner's "[Ongoing]" tasks show as ongoing without the tag, and Rin lists tasks soonest due first.
+- [ ] Reminder before a task is due (U3). Done when: store tests cover the reminder time (day before at 09:00, an hour before, none), once per due time, re-arming on a new due time and the column migration; the router test covers the fallback text; and live, a task due tomorrow gets a DM reminder at 09:00 in Rin's words.
 
 ## Cycle: feature and maintenance
 
