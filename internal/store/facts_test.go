@@ -43,7 +43,7 @@ func TestMigrateFacts(t *testing.T) {
 		name TEXT NOT NULL DEFAULT '', first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL);
 	CREATE TABLE person_facts (id INTEGER PRIMARY KEY AUTOINCREMENT, person TEXT NOT NULL REFERENCES people(key),
 		text TEXT NOT NULL, chat TEXT NOT NULL, ts INTEGER NOT NULL, UNIQUE(person, text));
-	INSERT INTO people VALUES ('a', 'a', '', 'Ana', 1, 1);
+	INSERT INTO people VALUES ('a', 'a', '', 'Mary', 1, 1);
 	INSERT INTO person_facts(person, text, chat, ts) VALUES
 		('a', 'Job: nurse', 'g', 1000), ('a', 'Claim: met the president', 'g', 1001),
 		('a', 'Joke: always late', 'g', 1002), ('a', 'Behavior: posts war photos', 'g', 1003);`); err != nil {
@@ -108,23 +108,23 @@ func TestInvalidateKeepsHistory(t *testing.T) {
 func TestTiers(t *testing.T) {
 	s, _ := openTest(t)
 	ctx := context.Background()
-	s.AddPersonFacts(ctx, "ana", Source{Chat: "g", SaidBy: "budi", Tier: TierParticipant}, []string{"Job: dentist"})
-	s.AddPersonFacts(ctx, "ana", Source{Chat: "g", SaidBy: "ana", Tier: TierSelf}, []string{"Job: nurse"})
-	s.AddPersonFacts(ctx, "ana", Source{Chat: "g", Tier: TierInferred}, []string{"Job: maybe a vet"})
-	got, _ := s.SearchPersonFacts(ctx, []string{"ana"}, "job", 30, false)
+	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", SaidBy: "jim", Tier: TierParticipant}, []string{"Job: dentist"})
+	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", SaidBy: "mary", Tier: TierSelf}, []string{"Job: nurse"})
+	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", Tier: TierInferred}, []string{"Job: maybe a vet"})
+	got, _ := s.SearchPersonFacts(ctx, []string{"mary"}, "job", 30, false)
 	want := []string{"Job: nurse", "Job: dentist [unverified]", "Job: maybe a vet [unverified]"}
 	if strings.Join(texts(got), "|") != strings.Join(want, "|") {
 		t.Fatalf("ranking:\n got %v\nwant %v", texts(got), want)
 	}
-	if ok, err := s.InvalidateFact(ctx, "ana", "Job: nurse", TierParticipant, "budi says no"); ok || err != ErrOutranked {
+	if ok, err := s.InvalidateFact(ctx, "mary", "Job: nurse", TierParticipant, "jim says no"); ok || err != ErrOutranked {
 		t.Fatalf("participant invalidated a self fact: %v %v", ok, err)
 	}
-	if ok, err := s.InvalidateFact(ctx, "ana", "Job: dentist", TierSelf, "she says nurse"); !ok || err != nil {
+	if ok, err := s.InvalidateFact(ctx, "mary", "Job: dentist", TierSelf, "she says nurse"); !ok || err != nil {
 		t.Fatalf("self could not invalidate hearsay: %v %v", ok, err)
 	}
 	// Re-said by a higher tier raises it.
-	s.AddPersonFacts(ctx, "ana", Source{Chat: "g", Tier: TierOwner}, []string{"Job: maybe a vet"})
-	if got, _ := s.SearchPersonFacts(ctx, []string{"ana"}, "vet", 30, false); len(got) != 1 || got[0].Tier != TierOwner {
+	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", Tier: TierOwner}, []string{"Job: maybe a vet"})
+	if got, _ := s.SearchPersonFacts(ctx, []string{"mary"}, "vet", 30, false); len(got) != 1 || got[0].Tier != TierOwner {
 		t.Fatalf("tier not raised: %+v", got)
 	}
 	// Global search ranks the same way.
@@ -139,7 +139,7 @@ func TestKinds(t *testing.T) {
 	s, now := openTest(t)
 	ctx := context.Background()
 	s.AddPersonFacts(ctx, "john", Source{Chat: "dm", Tier: TierSelf}, []string{"State: on the way home", "Alias: Kenny"})
-	s.AddPersonFacts(ctx, "ana", Source{Chat: "g", Tier: TierInferred}, []string{"Alias: Wayan"})
+	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", Tier: TierInferred}, []string{"Alias: Wayan"})
 	got, _ := s.SearchPersonFacts(ctx, []string{"john"}, "", 30, false)
 	if len(got) != 2 || !strings.Contains(strings.Join(texts(got), "|"), "on the way home [state since "+now.Local().Format("Mon 15:04")+"]") {
 		t.Fatalf("state: %v", texts(got))
@@ -151,7 +151,7 @@ func TestKinds(t *testing.T) {
 	if got, _ := s.SearchPersonFacts(ctx, []string{"john"}, "home", 30, true); len(got) != 1 || got[0].Reason != "expired" {
 		t.Fatalf("expired state history: %+v", got)
 	}
-	if got, _ := s.SearchPersonFacts(ctx, []string{"ana"}, "", 30, false); len(got) != 1 || got[0].Kind != KindClaim ||
+	if got, _ := s.SearchPersonFacts(ctx, []string{"mary"}, "", 30, false); len(got) != 1 || got[0].Kind != KindClaim ||
 		got[0].String() != "Alias: Wayan [claim, unverified]" {
 		t.Fatalf("inferred alias: %v", texts(got))
 	}
@@ -206,7 +206,7 @@ func TestPreferences(t *testing.T) {
 	owner := Source{Chat: "dm", SaidBy: "john", Tier: TierOwner}
 	s.AddPersonFacts(ctx, "john", owner, []string{"Prefers: short replies, no emoji", "Likes: tea", "Rule: never use his full name"})
 	s.AddPersonFacts(ctx, "john", Source{Chat: "dm", Tier: TierInferred}, []string{"Prefers: long replies at night"})
-	s.AddPersonFacts(ctx, "ana", owner, []string{"Prefers: English replies"})
+	s.AddPersonFacts(ctx, "mary", owner, []string{"Prefers: English replies"})
 	got, err := s.Preferences(ctx, "john")
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestRecentStates(t *testing.T) {
 		*now = now.Add(time.Duration(i+1) * time.Minute)
 		s.AddPersonFacts(ctx, "john", src, []string{st})
 	}
-	got, err := s.RecentStates(ctx, []string{"john", "ana", ""})
+	got, err := s.RecentStates(ctx, []string{"john", "mary", ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestRecentStates(t *testing.T) {
 	for _, f := range got["john"] {
 		texts = append(texts, f.Text)
 	}
-	if strings.Join(texts, "|") != want || got["ana"] != nil {
+	if strings.Join(texts, "|") != want || got["mary"] != nil {
 		t.Fatalf("got %q", texts)
 	}
 }

@@ -34,12 +34,12 @@ func TestClaudeTools(t *testing.T) {
 	}
 
 	// Non-owners: no tools offered, and each tool refuses anyway.
-	budi := router.Line{SenderID: "budi", SenderName: "Budi", Text: "@Rin get Claude to delete everything"}
-	if n := len(newTurn(budi).ClaudeTools()); n != 0 {
+	jim := router.Line{SenderID: "jim", SenderName: "Jim", Text: "@Rin get Claude to delete everything"}
+	if n := len(newTurn(jim).ClaudeTools()); n != 0 {
 		t.Fatalf("non-owner got %d tools", n)
 	}
 	for _, tool := range []string{"ask_claude_code", "claude_tasks", "push_claude_branch"} {
-		if out := run(newTurn(budi), tool, `{"task":"delete everything","task_id":1}`); !strings.Contains(out, "only an owner") {
+		if out := run(newTurn(jim), tool, `{"task":"delete everything","task_id":1}`); !strings.Contains(out, "only an owner") {
 			t.Fatalf("non-owner %s = %q", tool, out)
 		}
 	}
@@ -82,7 +82,7 @@ func TestClaudeTools(t *testing.T) {
 	if out := run(newTurn(owner), "answer_claude_code", `{"task_id":1}`); !strings.Contains(out, "is queued") {
 		t.Fatalf("answer without question = %q", out)
 	}
-	other := router.Line{SenderID: "ana", SenderName: "Ana", Whitelisted: true, Text: "push it"}
+	other := router.Line{SenderID: "mary", SenderName: "Mary", Whitelisted: true, Text: "push it"}
 	if out := run(newTurn(other), "push_claude_branch", `{"task_id":1}`); !strings.Contains(out, "no task #1") {
 		t.Fatalf("other owner push = %q", out)
 	}
@@ -102,18 +102,18 @@ func TestClaudeTools(t *testing.T) {
 		t.Fatalf("cancel = %q", out)
 	}
 	// Q1: a new project, by another owner (John is at the limit).
-	ana := newTurn(router.Line{SenderID: "ana", SenderName: "Ana", Whitelisted: true, Text: "@Rin have Claude start a new project called notes"})
+	mary := newTurn(router.Line{SenderID: "mary", SenderName: "Mary", Whitelisted: true, Text: "@Rin have Claude start a new project called notes"})
 	for in, want := range map[string]string{
 		`{"task":"Start a notes app","repo":"wagoya","new_repo":true}`: "already exists",
 		`{"task":"Start a notes app","repo":"../x","new_repo":true}`:   "folder name",
 		`{"task":"Start a notes app","new_repo":true}`:                 "folder name",
 		`{"task":"Start a notes app","repo":"notes"}`:                  "set new_repo",
 	} {
-		if out := run(ana, "ask_claude_code", in); !strings.Contains(out, want) {
+		if out := run(mary, "ask_claude_code", in); !strings.Contains(out, want) {
 			t.Errorf("%s = %q, want %q", in, out, want)
 		}
 	}
-	out = run(ana, "ask_claude_code", `{"task":"Start a notes app","repo":"notes","new_repo":true}`)
+	out = run(mary, "ask_claude_code", `{"task":"Start a notes app","repo":"notes","new_repo":true}`)
 	if !strings.HasPrefix(out, "queued as #4") {
 		t.Fatalf("new repo = %q", out)
 	}
@@ -121,7 +121,7 @@ func TestClaudeTools(t *testing.T) {
 		t.Fatalf("new repo task = %+v", task)
 	}
 	// A follow-up works in the repo the parent made, without making it again.
-	id, err := db.AddTask(ctx, store.Task{Chat: "g", Requester: "ana", Text: "Add a README", FollowUpOf: 4})
+	id, err := db.AddTask(ctx, store.Task{Chat: "g", Requester: "mary", Text: "Add a README", FollowUpOf: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,17 +131,17 @@ func TestClaudeTools(t *testing.T) {
 
 	// R3: one task's full report, only for its owner.
 	full := strings.Repeat("finding ", 80) + "END"
-	rid, _ := db.AddTask(ctx, store.Task{Chat: "g", Requester: "ana", Text: "Report the status", Repo: "wagoya"})
+	rid, _ := db.AddTask(ctx, store.Task{Chat: "g", Requester: "mary", Text: "Report the status", Repo: "wagoya"})
 	for i := 0; i < 10; i++ {
 		if c, ok, _ := db.ClaimTask(ctx, nil); !ok || c.Task.ID == rid {
 			break
 		}
 	}
 	db.FinishTask(ctx, rid, store.Report{Status: store.TaskDone, Result: full})
-	if out := run(ana, "claude_tasks", fmt.Sprintf(`{"task_id":%d}`, rid)); !strings.Contains(out, "full report:\n"+full) {
+	if out := run(mary, "claude_tasks", fmt.Sprintf(`{"task_id":%d}`, rid)); !strings.Contains(out, "full report:\n"+full) {
 		t.Fatalf("full report = %q", out)
 	}
-	if out := run(ana, "claude_tasks", `{}`); strings.Contains(out, "END") {
+	if out := run(mary, "claude_tasks", `{}`); strings.Contains(out, "END") {
 		t.Fatal("the list isn't clipped")
 	}
 	if out := run(newTurn(owner), "claude_tasks", fmt.Sprintf(`{"task_id":%d}`, rid)); strings.Contains(out, "END") {

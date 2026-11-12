@@ -4,9 +4,9 @@ import "testing"
 
 func TestResolveMentions(t *testing.T) {
 	handles := map[string]string{"P1": "143", "P2": "pn:6281", "P3": "999"}
-	names := map[string]string{"P1": "John Doe", "P2": "Omar", "P3": "Ana Maria"}
+	names := map[string]string{"P1": "John Doe", "P2": "Jack", "P3": "Mary Major"}
 	send, stored, ms := ResolveMentions("@P2 ready? @P1 too. @P9 no. @P2 again", handles, names)
-	if send != "@6281 ready? @143 too. @P9 no. @6281 again" || stored != "@Omar ready? @John Doe too. @P9 no. @Omar again" {
+	if send != "@6281 ready? @143 too. @P9 no. @6281 again" || stored != "@Jack ready? @John Doe too. @P9 no. @Jack again" {
 		t.Fatalf("send %q stored %q", send, stored)
 	}
 	if len(ms) != 2 || ms[0].Key != "pn:6281" || ms[1].User != "143" {
@@ -24,7 +24,7 @@ func TestResolveMentions(t *testing.T) {
 // L10: a scheduled message keeps its tags until it is sent.
 func TestPinAndExpandMentions(t *testing.T) {
 	handles := map[string]string{"P1": "143", "P2": "pn:6281"}
-	names := map[string]string{"P1": "John Doe", "P2": "Omar"}
+	names := map[string]string{"P1": "John Doe", "P2": "Jack"}
 	pinned := PinMentions("@P1 @P2 futsal in 15. @John Doe again. @P7 stays. sneaky @{999}", handles, names)
 	if pinned != "@{143} @{pn:6281} futsal in 15. @{143} again. @P7 stays. sneaky @ {999}" {
 		t.Fatalf("pinned %q", pinned)

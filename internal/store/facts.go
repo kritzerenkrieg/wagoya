@@ -580,7 +580,7 @@ func (s *Store) SearchAllFacts(ctx context.Context, query string, limit int, his
 		return s.queryFacts(ctx, limit, seen, out, `SELECT `+factCols+` FROM person_facts f WHERE `+validOnly(history)+`
 			ORDER BY f.id DESC LIMIT ?`, limit)
 	}
-	// People named in the query first: "Omar" or "what does Omar do".
+	// People named in the query first: "Jack" or "what does Jack do".
 	for _, w := range strings.Fields(query) {
 		w = strings.ToLower(strings.Trim(w, `?!.,:;"'`))
 		if len([]rune(w)) < 3 || stopwords[w] {
@@ -592,7 +592,7 @@ func (s *Store) SearchAllFacts(ctx context.Context, query string, limit int, his
 		}
 		for _, p := range people {
 			// J2 b: rank their facts by the rest of the query ("what does
-			// Omar draw" -> "draw"), falling back to their newest.
+			// Jack draw" -> "draw"), falling back to their newest.
 			rest := strings.TrimSpace(strings.Replace(strings.ToLower(query), w, " ", 1))
 			if fq := ftsQuery(rest); fq != "" {
 				if out, err = s.queryFacts(ctx, limit, seen, out, `SELECT `+factCols+` FROM person_facts_fts

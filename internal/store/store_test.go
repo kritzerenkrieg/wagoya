@@ -49,7 +49,7 @@ func TestMemoriesPerChatSearch(t *testing.T) {
 	defer s.Close()
 	s.AddMemories(ctx, "g1", []router.Memory{
 		{Category: "plan", Text: "Dinner is on Friday at 7pm."},
-		{Category: "person", Text: "Budi is the treasurer."},
+		{Category: "person", Text: "Jim is the treasurer."},
 		{Category: "plan", Text: "Dinner is on Friday at 7pm."}, // duplicate
 	})
 	s.AddMemories(ctx, "g2", []router.Memory{{Category: "fact", Text: "Dinner budget is secret."}})
@@ -101,7 +101,7 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now()
-	if err := s.UpsertPerson(ctx, "lidA", "lidA", "", "Budi", now); err != nil {
+	if err := s.UpsertPerson(ctx, "lidA", "lidA", "", "Jim", now); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UpsertPerson(ctx, "lidA", "", "6281", "", now); err != nil { // name kept, pn filled
@@ -109,13 +109,13 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 	}
 	var name, pn string
 	s.db.QueryRow(`SELECT name, pn FROM people WHERE key='lidA'`).Scan(&name, &pn)
-	if name != "Budi" || pn != "6281" {
+	if name != "Jim" || pn != "6281" {
 		t.Fatalf("upsert merged badly: name=%q pn=%q", name, pn)
 	}
 
 	s.UpsertPerson(ctx, "lidB", "lidB", "", "Ani", now)
-	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group1", Tier: TierSelf}, []string{"Budi is the treasurer.", "Budi is the treasurer."})
-	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group2", Tier: TierSelf}, []string{"Budi likes durian."}) // learned in another chat
+	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group1", Tier: TierSelf}, []string{"Jim is the treasurer.", "Jim is the treasurer."})
+	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group2", Tier: TierSelf}, []string{"Jim likes durian."}) // learned in another chat
 	for i := range 12 {
 		s.AddPersonFacts(ctx, "lidB", Source{Chat: "dm", Tier: TierSelf}, []string{fmt.Sprintf("fact %02d", i)})
 	}
@@ -124,7 +124,7 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got["lidA"]) != 2 || got["lidA"][1] != "Budi likes durian." {
+	if len(got["lidA"]) != 2 || got["lidA"][1] != "Jim likes durian." {
 		t.Fatalf("lidA facts (global across chats): %v", got["lidA"])
 	}
 	if len(got["lidB"]) != 12 || got["lidB"][0] != "fact 00" || got["lidB"][11] != "fact 11" {
@@ -134,10 +134,10 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 		t.Fatal("unknown person has facts")
 	}
 
-	if ok, _ := s.InvalidateFact(ctx, "lidA", "  budi likes DURIAN. ", TierOwner, "test"); !ok {
+	if ok, _ := s.InvalidateFact(ctx, "lidA", "  jim likes DURIAN. ", TierOwner, "test"); !ok {
 		t.Fatal("forget did not match")
 	}
-	if ok, _ := s.InvalidateFact(ctx, "lidB", "Budi is the treasurer.", TierOwner, "test"); ok {
+	if ok, _ := s.InvalidateFact(ctx, "lidB", "Jim is the treasurer.", TierOwner, "test"); ok {
 		t.Fatal("forget crossed people")
 	}
 	got, _ = s.PersonFacts(ctx, []string{"lidA"})
@@ -154,7 +154,7 @@ func TestSearchPersonFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.AddPersonFacts(ctx, "john", Source{Chat: "dm", Tier: TierSelf}, []string{"Job: Nurse at Acme Corp.", "Origin: Lisbon, Portugal."})
-	s.AddPersonFacts(ctx, "budi", Source{Chat: "g1", Tier: TierSelf}, []string{"Job: treasurer of the group."})
+	s.AddPersonFacts(ctx, "jim", Source{Chat: "g1", Tier: TierSelf}, []string{"Job: treasurer of the group."})
 	s.Close()
 
 	s, err = Open(path, 32) // restart: index rebuilt and still consistent
@@ -163,11 +163,11 @@ func TestSearchPersonFacts(t *testing.T) {
 	}
 	defer s.Close()
 
-	got, err := s.SearchPersonFacts(ctx, []string{"john", "budi"}, "where is his job?", 30, false)
+	got, err := s.SearchPersonFacts(ctx, []string{"john", "jim"}, "where is his job?", 30, false)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("job search: %+v %v", got, err)
 	}
-	if got, _ := s.SearchPersonFacts(ctx, []string{"budi"}, "lisbon", 30, false); len(got) != 0 {
+	if got, _ := s.SearchPersonFacts(ctx, []string{"jim"}, "lisbon", 30, false); len(got) != 0 {
 		t.Fatalf("searched a person not in scope: %+v", got)
 	}
 	if got, _ := s.SearchPersonFacts(ctx, []string{"john"}, "nurses", 30, false); len(got) != 1 || got[0].Person != "john" {
@@ -182,7 +182,7 @@ func TestSearchPersonFacts(t *testing.T) {
 	if got, _ := s.SearchPersonFacts(ctx, []string{"john"}, "lisbon", 30, false); len(got) != 0 {
 		t.Fatalf("forgotten fact still found: %+v", got)
 	}
-	if n, _ := s.FactCounts(ctx, []string{"john", "budi", "x"}); n["john"] != 1 || n["budi"] != 1 || n["x"] != 0 {
+	if n, _ := s.FactCounts(ctx, []string{"john", "jim", "x"}); n["john"] != 1 || n["jim"] != 1 || n["x"] != 0 {
 		t.Fatalf("counts: %v", n)
 	}
 }
@@ -194,8 +194,8 @@ func TestPersonName(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	s.UpsertPerson(ctx, "lidF", "lidF", "", "Dewi Lestari", time.Now())
-	if n, _ := s.PersonName(ctx, "lidF"); n != "Dewi Lestari" {
+	s.UpsertPerson(ctx, "lidF", "lidF", "", "Jane Doe", time.Now())
+	if n, _ := s.PersonName(ctx, "lidF"); n != "Jane Doe" {
 		t.Fatalf("name = %q", n)
 	}
 	if n, err := s.PersonName(ctx, "nobody"); n != "" || err != nil {
@@ -211,14 +211,14 @@ func TestGlobalPeopleSearch(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now()
-	s.UpsertPerson(ctx, "john", "john", "", "Alex Rivera", now)
-	s.UpsertPerson(ctx, "omar", "omar", "", "Omar", now)
+	s.UpsertPerson(ctx, "john", "john", "", "Alex Smith", now)
+	s.UpsertPerson(ctx, "jack", "jack", "", "Jack", now)
 	s.UpsertPerson(ctx, "kris", "kris", "", "Kris", now)
 	s.AddPersonFacts(ctx, "john", Source{Chat: "dm", Tier: TierSelf}, []string{"Origin: Lisbon, Portugal."})
-	s.AddPersonFacts(ctx, "omar", Source{Chat: "group", Tier: TierSelf}, []string{"Relation: John's friend.", "Knows: humanitarian law."})
+	s.AddPersonFacts(ctx, "jack", Source{Chat: "group", Tier: TierSelf}, []string{"Relation: John's friend.", "Knows: humanitarian law."})
 
 	// By name, also from a longer display name; short words don't match.
-	if p, _ := s.FindPeople(ctx, "Bapak Omar", 5); len(p) != 1 || p[0].Key != "omar" {
+	if p, _ := s.FindPeople(ctx, "Bapak Jack", 5); len(p) != 1 || p[0].Key != "jack" {
 		t.Fatalf("display name lookup: %+v", p)
 	}
 	if p, _ := s.FindPeople(ctx, "alex", 5); len(p) != 1 || p[0].Key != "john" {
@@ -229,11 +229,11 @@ func TestGlobalPeopleSearch(t *testing.T) {
 	}
 
 	// Global search: a name in the query pulls that person's facts, from any chat.
-	got, err := s.SearchAllFacts(ctx, "who is omar?", 30, false)
-	if err != nil || len(got) != 2 || got[0].Person != "omar" {
+	got, err := s.SearchAllFacts(ctx, "who is jack?", 30, false)
+	if err != nil || len(got) != 2 || got[0].Person != "jack" {
 		t.Fatalf("name search: %+v %v", got, err)
 	}
-	if got, _ := s.SearchAllFacts(ctx, "humanitarian", 30, false); len(got) != 1 || got[0].Person != "omar" {
+	if got, _ := s.SearchAllFacts(ctx, "humanitarian", 30, false); len(got) != 1 || got[0].Person != "jack" {
 		t.Fatalf("fact search: %+v", got)
 	}
 	if got, _ := s.SearchAllFacts(ctx, "", 30, false); len(got) != 3 {
@@ -241,14 +241,14 @@ func TestGlobalPeopleSearch(t *testing.T) {
 	}
 
 	// Saving by name: a known person resolves, an unknown one gets a profile.
-	if p, _ := s.PersonByName(ctx, "omar", now); p.Key != "omar" {
+	if p, _ := s.PersonByName(ctx, "jack", now); p.Key != "jack" {
 		t.Fatalf("resolve known: %+v", p)
 	}
-	p, err := s.PersonByName(ctx, "Dewi  Lestari", now)
-	if err != nil || p.Key != "name:dewi lestari" || p.Name != "Dewi Lestari" {
+	p, err := s.PersonByName(ctx, "Jane  Doe", now)
+	if err != nil || p.Key != "name:jane doe" || p.Name != "Jane Doe" {
 		t.Fatalf("create unknown: %+v %v", p, err)
 	}
-	if p2, _ := s.PersonByName(ctx, "dewi", now); p2.Key != p.Key {
+	if p2, _ := s.PersonByName(ctx, "jane", now); p2.Key != p.Key {
 		t.Fatalf("created profile not found again: %+v", p2)
 	}
 }
@@ -261,28 +261,28 @@ func TestSameNameTags(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now()
-	s.UpsertPerson(ctx, "900000000009249", "900000000009249", "", "Omar", now)
-	s.UpsertPerson(ctx, "111111111111180", "111111111111180", "", "omar", now.Add(-time.Hour))
+	s.UpsertPerson(ctx, "900000000009249", "900000000009249", "", "Jack", now)
+	s.UpsertPerson(ctx, "111111111111180", "111111111111180", "", "jack", now.Add(-time.Hour))
 	s.UpsertPerson(ctx, "222", "222", "", "Ani", now)
-	if IDTag("900000000009249") != "9249" || IDTag("name:dewi") != "name" || IDTag("pn:62812") != "2812" {
+	if IDTag("900000000009249") != "9249" || IDTag("name:jane") != "name" || IDTag("pn:62812") != "2812" {
 		t.Fatal("IDTag")
 	}
-	if taken, _ := s.NameTaken(ctx, "Omar", "900000000009249"); !taken {
+	if taken, _ := s.NameTaken(ctx, "Jack", "900000000009249"); !taken {
 		t.Fatal("shared name not detected")
 	}
 	if taken, _ := s.NameTaken(ctx, "Ani", "222"); taken {
 		t.Fatal("unique name flagged")
 	}
-	if p, _ := s.FindPeople(ctx, "Omar", 5); len(p) != 2 {
+	if p, _ := s.FindPeople(ctx, "Jack", 5); len(p) != 2 {
 		t.Fatalf("both Omars: %+v", p)
 	}
-	if p, _ := s.FindPeople(ctx, "Omar #1180", 5); len(p) != 1 || p[0].Key != "111111111111180" {
+	if p, _ := s.FindPeople(ctx, "Jack #1180", 5); len(p) != 1 || p[0].Key != "111111111111180" {
 		t.Fatalf("tag pick: %+v", p)
 	}
-	if p, _ := s.PersonByName(ctx, "omar #1180", now); p.Key != "111111111111180" {
+	if p, _ := s.PersonByName(ctx, "jack #1180", now); p.Key != "111111111111180" {
 		t.Fatalf("save by tag: %+v", p)
 	}
-	if p, _ := s.PersonByName(ctx, "Budi #7777", now); p.Key != "name:budi" || p.Name != "Budi" {
+	if p, _ := s.PersonByName(ctx, "Jim #7777", now); p.Key != "name:jim" || p.Name != "Jim" {
 		t.Fatalf("unknown tag: %+v", p)
 	}
 }
@@ -335,7 +335,7 @@ func TestAliasAndMerge(t *testing.T) {
 	}
 	// A name-only profile created earlier merges into the real one.
 	s.UpsertPerson(ctx, "lidD", "lidD", "", "dewi_real", now)
-	ghost, _ := s.PersonByName(ctx, "Dewi Lestari", now)
+	ghost, _ := s.PersonByName(ctx, "Jane Doe", now)
 	s.AddPersonFacts(ctx, ghost.Key, Source{Chat: "g", Tier: TierSelf}, []string{"Habit: posts war photos."})
 	if ok, err := s.MergePerson(ctx, ghost.Key, "lidD"); !ok || err != nil {
 		t.Fatalf("merge: %v %v", ok, err)
@@ -485,7 +485,7 @@ func TestReactions(t *testing.T) {
 		}
 		return ok
 	}
-	if !set("m1", "john", "👍") || !set("m1", "ana", "😂") || !set("m1", "john", "❤️") {
+	if !set("m1", "john", "👍") || !set("m1", "mary", "😂") || !set("m1", "john", "❤️") {
 		t.Fatal("reaction on a stored message not recorded")
 	}
 	if set("nope", "john", "👍") {
@@ -496,10 +496,10 @@ func TestReactions(t *testing.T) {
 	for _, r := range h[0].Reactions {
 		byWho[r.SenderID] = r.Emoji
 	}
-	if len(h) != 1 || len(h[0].Reactions) != 2 || byWho["john"] != "❤️" || byWho["ana"] != "😂" {
+	if len(h) != 1 || len(h[0].Reactions) != 2 || byWho["john"] != "❤️" || byWho["mary"] != "😂" {
 		t.Fatalf("history: %+v", h)
 	}
-	set("m1", "ana", "")
+	set("m1", "mary", "")
 	if h, _ := s.History(ctx, "g"); len(h[0].Reactions) != 1 || h[0].Reactions[0].Name != "John" {
 		t.Fatalf("after removal: %+v", h[0].Reactions)
 	}
@@ -536,12 +536,12 @@ func TestOlderMessages(t *testing.T) {
 		}
 	}
 	add("g", 80*time.Hour, "John", "too old: futsal booking")
-	add("g", 10*time.Hour, "Omar", "Messi is overrated")
+	add("g", 10*time.Hour, "Jack", "Messi is overrated")
 	add("g", 9*time.Hour, "John", "Messi has 8 Ballon d'Ors")
-	add("g", 8*time.Hour, "Budi", "lunch?")
-	add("other", time.Hour, "Ana", "Messi secret in another chat")
+	add("g", 8*time.Hour, "Jim", "lunch?")
+	add("other", time.Hour, "Mary", "Messi secret in another chat")
 	add("g", 2*time.Hour, "John", "window one")
-	add("g", time.Hour, "Omar", "window two")
+	add("g", time.Hour, "Jack", "window two")
 
 	text := func(ls []router.Line) string {
 		var out []string
@@ -560,7 +560,7 @@ func TestOlderMessages(t *testing.T) {
 	if got, _ := s.OlderMessages(ctx, "g", "who said Messi ballon", 1, 0); text(got) != "Messi has 8 Ballon d'Ors" {
 		t.Fatalf("best match first: %q", text(got))
 	}
-	if got, _ := s.OlderMessages(ctx, "g", "omar", 10, 0); text(got) != "Messi is overrated" {
+	if got, _ := s.OlderMessages(ctx, "g", "jack", 10, 0); text(got) != "Messi is overrated" {
 		t.Fatalf("by sender name: %q", text(got))
 	}
 	if got, _ := s.OlderMessages(ctx, "g", "", 10, 3); len(got) != 0 {
@@ -590,14 +590,14 @@ func TestMutesAndSpend(t *testing.T) {
 	if muted("a") {
 		t.Fatal("muted by default")
 	}
-	s.SetMute(ctx, "a", "Andi", time.Time{}, "owner")
-	s.SetMute(ctx, "b", "Budi", now.Add(5*time.Minute), "flood")
+	s.SetMute(ctx, "a", "Richard", time.Time{}, "owner")
+	s.SetMute(ctx, "b", "Jim", now.Add(5*time.Minute), "flood")
 	s.SetMute(ctx, "c", "Cici", now.Add(-time.Minute), "flood") // already over
 	if !muted("a") || !muted("b") || muted("c") {
 		t.Fatal("mute state wrong")
 	}
 	ms, _ := s.Mutes(ctx)
-	if len(ms) != 2 || ms[0].Name != "Budi" || ms[1].Name != "Andi" || !ms[1].Until.IsZero() {
+	if len(ms) != 2 || ms[0].Name != "Jim" || ms[1].Name != "Richard" || !ms[1].Until.IsZero() {
 		t.Fatalf("list: %+v", ms)
 	}
 	now = now.Add(6 * time.Minute)
@@ -632,13 +632,13 @@ func TestIdentityMergesNotStored(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	s.UpsertPerson(ctx, "john", "john", "", "John", time.Now())
-	s.AddPersonFacts(ctx, "john", Source{Chat: "g", Tier: TierInferred}, []string{"Claim: John and Budi are the same person", "Likes: chess"})
-	s.AddMemories(ctx, "g", []router.Memory{{Category: "fact", Text: "John and Budi are interchangeable"}, {Category: "plan", Text: "Futsal Friday"}})
+	s.AddPersonFacts(ctx, "john", Source{Chat: "g", Tier: TierInferred}, []string{"Claim: John and Jim are the same person", "Likes: chess"})
+	s.AddMemories(ctx, "g", []router.Memory{{Category: "fact", Text: "John and Jim are interchangeable"}, {Category: "plan", Text: "Futsal Friday"}})
 	facts, _ := s.PersonFacts(ctx, []string{"john"})
 	if len(facts["john"]) != 1 || !strings.Contains(facts["john"][0], "chess") {
 		t.Fatalf("facts: %v", facts["john"])
 	}
-	if m, _ := s.SearchMemories(ctx, "g", "John Budi interchangeable futsal", 10); len(m) != 1 || m[0].Text != "Futsal Friday" {
+	if m, _ := s.SearchMemories(ctx, "g", "John Jim interchangeable futsal", 10); len(m) != 1 || m[0].Text != "Futsal Friday" {
 		t.Fatalf("memories: %+v", m)
 	}
 }
@@ -650,10 +650,10 @@ func TestRewriteSummaries(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
-	s.SetSummary(ctx, "a", "John (P1) and Budi.")
+	s.SetSummary(ctx, "a", "John (P1) and Jim.")
 	s.SetSummary(ctx, "b", "Nothing to fix.")
 	n, err := s.RewriteSummaries(ctx, func(t string) string { return strings.ReplaceAll(t, " (P1)", "") })
-	if got, _ := s.Summary(ctx, "a"); err != nil || n != 1 || got != "John and Budi." {
+	if got, _ := s.Summary(ctx, "a"); err != nil || n != 1 || got != "John and Jim." {
 		t.Fatalf("rewrite = %d %v %q", n, err, got)
 	}
 }

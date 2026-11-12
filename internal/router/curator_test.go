@@ -23,8 +23,8 @@ func TestCuratorPromptAndParse(t *testing.T) {
 			t.Fatalf("missing %q in:\n%s", want, p)
 		}
 	}
-	r := ParseCurator("<person id=\"P2\">Likes: chess</person>\n<alias id=\"P2\"> Wayan </alias>\n<person name=\"Dewi\">Habit: posts war photos</person>\nnoise")
-	if len(r.Facts) != 2 || r.Facts[0].Handle != "P2" || r.Facts[1].Name != "Dewi" {
+	r := ParseCurator("<person id=\"P2\">Likes: chess</person>\n<alias id=\"P2\"> Wayan </alias>\n<person name=\"Jane\">Habit: posts war photos</person>\nnoise")
+	if len(r.Facts) != 2 || r.Facts[0].Handle != "P2" || r.Facts[1].Name != "Jane" {
 		t.Fatalf("facts: %+v", r.Facts)
 	}
 	if len(r.Aliases) != 1 || r.Aliases[0] != (PersonFact{Handle: "P2", Text: "Wayan"}) {
@@ -60,11 +60,11 @@ func TestSummaryInPrompt(t *testing.T) {
 }
 
 func TestStripHandles(t *testing.T) {
-	names := map[string]string{"P1": "John", "P2": "Budi"}
+	names := map[string]string{"P1": "John", "P2": "Jim"}
 	for _, c := range []struct{ in, want string }{
 		{"Chat is mostly John (P1) with Rin.", "Chat is mostly John with Rin."},
-		{"John (John, P1), Omar (P2, owner of a bot; listed as MOD), Ana (P3) and Rin.", "John (John), Omar (owner of a bot; listed as MOD), Ana and Rin."},
-		{"P2 said the match is at 19:00, @P1 agreed.", "Budi said the match is at 19:00, John agreed."},
+		{"John (John, P1), Jack (P2, owner of a bot; listed as MOD), Mary (P3) and Rin.", "John (John), Jack (owner of a bot; listed as MOD), Mary and Rin."},
+		{"P2 said the match is at 19:00, @P1 agreed.", "Jim said the match is at 19:00, John agreed."},
 		{"P9 joined late.", "someone joined late."},
 		{"No handles here, P2P networking and MP3s.", "No handles here, P2P networking and MP3s."},
 	} {
@@ -72,7 +72,7 @@ func TestStripHandles(t *testing.T) {
 			t.Errorf("StripHandles(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
-	if got := ParseSummaryFor("<summary>Budi (P2) backs Messi; P1 backs Ronaldo.</summary>", names); got != "Budi backs Messi; John backs Ronaldo." {
+	if got := ParseSummaryFor("<summary>Jim (P2) backs Messi; P1 backs Ronaldo.</summary>", names); got != "Jim backs Messi; John backs Ronaldo." {
 		t.Errorf("ParseSummaryFor = %q", got)
 	}
 }

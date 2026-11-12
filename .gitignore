@@ -8,3 +8,6 @@ data/
 # build output
 /wagoya
 /dist/
+
+# Local promo website (untracked)
+/website/

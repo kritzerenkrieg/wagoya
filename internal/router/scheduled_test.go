@@ -9,8 +9,8 @@ import (
 // T1: the run sees the brief, the repeat and earlier sends; a one-off has no
 // earlier sends section.
 func TestScheduledRequest(t *testing.T) {
-	r := ScheduledRequest("lunch nag for @P2", "daily", []string{"eat, @Ana!", "food time"})
-	for _, want := range []string{"lunch nag for @P2", "repeats daily", "- eat, @Ana!", "- food time", "Always write"} {
+	r := ScheduledRequest("lunch nag for @P2", "daily", []string{"eat, @Mary!", "food time"})
+	for _, want := range []string{"lunch nag for @P2", "repeats daily", "- eat, @Mary!", "- food time", "Always write"} {
 		if !strings.Contains(r, want) {
 			t.Errorf("missing %q in %q", want, r)
 		}
@@ -25,11 +25,11 @@ func TestUnpinMentions(t *testing.T) {
 	handles := map[string]string{"P1": "lid1"}
 	got := UnpinMentions("hey @{lid1} and @{pn:62} and @{gone}", handles, func(k string) string {
 		if k == "pn:62" {
-			return "Budi"
+			return "Jim"
 		}
 		return ""
 	})
-	if got != "hey @P1 and @Budi and @someone" {
+	if got != "hey @P1 and @Jim and @someone" {
 		t.Fatalf("got %q", got)
 	}
 }

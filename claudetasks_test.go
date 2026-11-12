@@ -54,8 +54,8 @@ func TestTaskCommandRoundTrip(t *testing.T) {
 
 func TestTaskMessage(t *testing.T) {
 	group := store.Task{ID: 3, Chat: "123@g.us", Requester: "john", Status: store.TaskDone}
-	got := taskMessage(group, memtools.MarkCompleted+"\nDone, see @{budi}.")
-	if got != memtools.MarkCompleted+"\n@{john} Done, see @ {budi}." {
+	got := taskMessage(group, memtools.MarkCompleted+"\nDone, see @{jim}.")
+	if got != memtools.MarkCompleted+"\n@{john} Done, see @ {jim}." {
 		t.Fatalf("group message = %q", got)
 	}
 	send, _, ms := router.ExpandMentions(got, func(string) string { return "John" })

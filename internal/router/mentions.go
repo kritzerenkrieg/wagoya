@@ -39,7 +39,7 @@ func PinMentions(text string, handles, names map[string]string) string {
 		}
 		return m
 	})
-	// "@Full Name", longest names first so "@Ana Maria" beats "@Ana".
+	// "@Full Name", longest names first so "@Mary Major" beats "@Mary".
 	hs := make([]string, 0, len(names))
 	for h, n := range names {
 		if handles[h] != "" && len([]rune(strings.TrimSpace(n))) >= 3 {

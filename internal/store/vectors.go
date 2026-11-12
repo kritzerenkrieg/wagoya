@@ -43,7 +43,7 @@ func decodeVec(b []byte) []float32 {
 }
 
 // EmbedText is what gets embedded for a fact: the owner's name and the text,
-// so "what does Omar like" finds Omar's facts.
+// so "what does Jack like" finds Jack's facts.
 func EmbedText(name, text string) string {
 	if name == "" {
 		return text

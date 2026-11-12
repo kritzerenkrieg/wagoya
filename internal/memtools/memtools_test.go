@@ -22,11 +22,11 @@ func setup(t *testing.T) (*store.Store, func(req router.Line, spoke ...string) (
 	}
 	t.Cleanup(func() { db.Close() })
 	ctx, now := context.Background(), time.Now()
-	for _, p := range [][2]string{{"john", "John"}, {"budi", "Budi"}, {"ana", "Ana"}} {
+	for _, p := range [][2]string{{"john", "John"}, {"jim", "Jim"}, {"mary", "Mary"}} {
 		db.UpsertPerson(ctx, p[0], p[0], "", p[1], now)
 	}
 	return db, func(req router.Line, spoke ...string) (*Turn, func(tool, input string) string) {
-		hist := []router.Line{{SenderID: "ana", SenderName: "Ana", Text: "hi"}}
+		hist := []router.Line{{SenderID: "mary", SenderName: "Mary", Text: "hi"}}
 		handles := router.AssignHandles(hist, &req)
 		tr := &Turn{DB: db, Chat: "g", Handles: handles, Requester: req, Spoke: map[string]bool{}}
 		for _, h := range spoke {
@@ -47,7 +47,7 @@ func setup(t *testing.T) (*store.Store, func(req router.Line, spoke ...string) (
 
 var (
 	john = router.Line{SenderID: "john", SenderName: "John", Whitelisted: true}
-	budi = router.Line{SenderID: "budi", SenderName: "Budi"}
+	jim  = router.Line{SenderID: "jim", SenderName: "Jim"}
 )
 
 func facts(db *store.Store, key string) []store.Fact {
@@ -57,8 +57,8 @@ func facts(db *store.Store, key string) []store.Fact {
 
 func TestSaveFactChecksAndTiers(t *testing.T) {
 	db, turn := setup(t)
-	// Budi is P2, Ana P1 (she spoke).
-	tr, call := turn(budi, "P2", "P1")
+	// Jim is P2, Mary P1 (she spoke).
+	tr, call := turn(jim, "P2", "P1")
 	for in, want := range map[string]string{
 		`{"subject":"P2","content":"nurse"}`:                                 "short label",
 		`{"subject":"P9","content":"Job: nurse"}`:                            "no participant",
@@ -73,27 +73,27 @@ func TestSaveFactChecksAndTiers(t *testing.T) {
 	if tr.Saved() != 0 {
 		t.Fatal("rejected input was saved")
 	}
-	// About himself: self. About Ana, from Budi: hearsay. Ana said it herself: self.
+	// About himself: self. About Mary, from Jim: hearsay. Mary said it herself: self.
 	call("save_fact", `{"subject":"P2","content":"Job: nurse"}`)
 	call("save_fact", `{"subject":"P1","content":"Job: dentist"}`)
 	call("save_fact", `{"subject":"P1","content":"Likes: chess","source":"self"}`)
-	call("save_fact", `{"subject":"Omar","content":"Likes: war history","kind":"claim"}`)
-	if got := facts(db, "budi"); len(got) != 1 || got[0].Tier != store.TierSelf {
-		t.Fatalf("budi: %+v", got)
+	call("save_fact", `{"subject":"Jack","content":"Likes: war history","kind":"claim"}`)
+	if got := facts(db, "jim"); len(got) != 1 || got[0].Tier != store.TierSelf {
+		t.Fatalf("jim: %+v", got)
 	}
 	tiers := map[string]store.Tier{}
-	for _, f := range facts(db, "ana") {
+	for _, f := range facts(db, "mary") {
 		tiers[f.Text] = f.Tier
 	}
 	if tiers["Job: dentist"] != store.TierParticipant || tiers["Likes: chess"] != store.TierSelf {
-		t.Fatalf("ana tiers: %v", tiers)
+		t.Fatalf("mary tiers: %v", tiers)
 	}
-	omar, _ := db.FindPeople(context.Background(), "Omar", 1)
-	if len(omar) != 1 || facts(db, omar[0].Key)[0].Kind != store.KindClaim {
-		t.Fatalf("omar: %v", omar)
+	jack, _ := db.FindPeople(context.Background(), "Jack", 1)
+	if len(jack) != 1 || facts(db, jack[0].Key)[0].Kind != store.KindClaim {
+		t.Fatalf("jack: %v", jack)
 	}
 	// source self needs the subject to have spoken.
-	_, call2 := turn(budi, "P2")
+	_, call2 := turn(jim, "P2")
 	if got := call2("save_fact", `{"subject":"P1","content":"Likes: tea","source":"self"}`); !strings.Contains(got, "source self") {
 		t.Fatalf("self without speaking: %q", got)
 	}
@@ -102,20 +102,20 @@ func TestSaveFactChecksAndTiers(t *testing.T) {
 func TestInvalidateRights(t *testing.T) {
 	db, turn := setup(t)
 	ctx := context.Background()
-	db.AddPersonFacts(ctx, "ana", store.Source{Chat: "g", SaidBy: "ana", Tier: store.TierSelf}, []string{"Job: nurse"})
-	db.AddPersonFacts(ctx, "budi", store.Source{Chat: "g", SaidBy: "budi", Tier: store.TierSelf}, []string{"Job: driver"})
-	_, call := turn(budi, "P2", "P1")
+	db.AddPersonFacts(ctx, "mary", store.Source{Chat: "g", SaidBy: "mary", Tier: store.TierSelf}, []string{"Job: nurse"})
+	db.AddPersonFacts(ctx, "jim", store.Source{Chat: "g", SaidBy: "jim", Tier: store.TierSelf}, []string{"Job: driver"})
+	_, call := turn(jim, "P2", "P1")
 	res := call("search_facts", `{"person":"P1"}`)
 	id := regexp.MustCompile(`fact (\d+) \| P1: Job: nurse`).FindStringSubmatch(res)
 	if id == nil {
 		t.Fatalf("search result has no id: %q", res)
 	}
 	if got := call("invalidate_fact", `{"id":`+id[1]+`,"reason":"quit"}`); !strings.Contains(got, "only owners") {
-		t.Fatalf("budi retracted ana's fact: %q", got)
+		t.Fatalf("jim retracted mary's fact: %q", got)
 	}
 	bid := regexp.MustCompile(`fact (\d+) \|`).FindStringSubmatch(call("search_facts", `{"person":"P2"}`))[1]
 	if got := call("invalidate_fact", `{"id":`+bid+`,"reason":"new job"}`); got != "done" {
-		t.Fatalf("budi could not retract his own fact: %q", got)
+		t.Fatalf("jim could not retract his own fact: %q", got)
 	}
 	_, owner := turn(john, "P2")
 	if got := owner("invalidate_fact", `{"id":`+id[1]+`,"reason":"asked to forget"}`); got != "done" {
@@ -127,7 +127,7 @@ func TestInvalidateRights(t *testing.T) {
 	if got := owner("invalidate_fact", `{"id":99999,"reason":"x"}`); !strings.Contains(got, "no fact") {
 		t.Fatalf("missing id: %q", got)
 	}
-	if f := facts(db, "ana"); f[0].Valid() || !strings.Contains(f[0].Reason, "asked to forget") {
+	if f := facts(db, "mary"); f[0].Valid() || !strings.Contains(f[0].Reason, "asked to forget") {
 		t.Fatalf("not kept as history: %+v", f)
 	}
 }
@@ -137,16 +137,16 @@ func TestCuratorIsInferredAndMergesAliases(t *testing.T) {
 	ctx := context.Background()
 	db.PersonByName(ctx, "Yan", time.Now())
 	db.AddPersonFacts(ctx, "name:yan", store.Source{Chat: "g", Tier: store.TierInferred}, []string{"Likes: futsal"})
-	tr := &Turn{DB: db, Chat: "g", Handles: map[string]string{"P1": "ana"}}
+	tr := &Turn{DB: db, Chat: "g", Handles: map[string]string{"P1": "mary"}}
 	var save llm.Tool = tr.CuratorTools()[0]
 	if _, ok := save.Schema["properties"].(map[string]any)["source"]; ok {
 		t.Fatal("curator can pick a source")
 	}
 	save.Run(ctx, json.RawMessage(`{"subject":"P1","content":"Study: civil engineering","source":"self"}`))
 	save.Run(ctx, json.RawMessage(`{"subject":"P1","content":"Alias: Yan"}`))
-	got := facts(db, "ana")
+	got := facts(db, "mary")
 	if len(got) != 3 || tr.Saved() != 2 {
-		t.Fatalf("ana: %+v", got)
+		t.Fatalf("mary: %+v", got)
 	}
 	for _, f := range got {
 		if f.Tier != store.TierInferred {
@@ -157,7 +157,7 @@ func TestCuratorIsInferredAndMergesAliases(t *testing.T) {
 
 func TestSaveMemory(t *testing.T) {
 	db, turn := setup(t)
-	_, call := turn(budi)
+	_, call := turn(jim)
 	if got := call("save_memory", `{"category":"gossip","content":"x y z"}`); !strings.Contains(got, "category must") {
 		t.Fatalf("bad category: %q", got)
 	}

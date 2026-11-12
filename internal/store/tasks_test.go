@@ -170,7 +170,7 @@ func TestMigrateTasks(t *testing.T) {
 	if err != nil || !ok || task.NewRepo || task.Repo != "wagoya" {
 		t.Fatalf("old task = %+v %v %v", task, ok, err)
 	}
-	id, _ := s.AddTask(ctx, Task{Chat: "g", Requester: "ana", Text: "new", Repo: "notes", NewRepo: true})
+	id, _ := s.AddTask(ctx, Task{Chat: "g", Requester: "mary", Text: "new", Repo: "notes", NewRepo: true})
 	if task, _, _ = s.TaskByID(ctx, id); !task.NewRepo {
 		t.Fatalf("new task = %+v", task)
 	}

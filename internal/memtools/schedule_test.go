@@ -54,8 +54,8 @@ func openDB(t *testing.T) *store.Store {
 func TestScheduleRights(t *testing.T) {
 	db := openDB(t)
 	owner := schedTurn(t, db, john, "dm-john", true)
-	other := schedTurn(t, db, budi, "group@g.us", true)
-	strangerDM := schedTurn(t, db, budi, "dm-budi", false)
+	other := schedTurn(t, db, jim, "group@g.us", true)
+	strangerDM := schedTurn(t, db, jim, "dm-jim", false)
 	for _, c := range []struct {
 		call  func(string, string) string
 		input string
@@ -88,7 +88,7 @@ func TestScheduleRights(t *testing.T) {
 func TestScheduleLimitListCancel(t *testing.T) {
 	db := openDB(t)
 	owner := schedTurn(t, db, john, "g@g.us", true)
-	other := schedTurn(t, db, budi, "g@g.us", true)
+	other := schedTurn(t, db, jim, "g@g.us", true)
 	for i := 0; i < MaxJobsPerChat; i++ {
 		if got := other("schedule_message", `{"text":"r","in_minutes":10}`); !strings.HasPrefix(got, "scheduled") {
 			t.Fatalf("job %d: %q", i, got)
@@ -102,10 +102,10 @@ func TestScheduleLimitListCancel(t *testing.T) {
 		t.Fatalf("list: %q", list)
 	}
 	id := regexp.MustCompile(`job (\d+)`).FindStringSubmatch(list)[1]
-	// A self-initiated job for Budi: he can cancel it; a stranger can't cancel Budi's.
-	ana := schedTurn(t, db, router.Line{SenderID: "ana", SenderName: "Ana"}, "g@g.us", true)
-	if got := ana("cancel_scheduled", `{"id":`+id+`}`); !strings.Contains(got, "only owners") {
-		t.Fatalf("ana cancelled budi's: %q", got)
+	// A self-initiated job for Jim: he can cancel it; a stranger can't cancel Jim's.
+	mary := schedTurn(t, db, router.Line{SenderID: "mary", SenderName: "Mary"}, "g@g.us", true)
+	if got := mary("cancel_scheduled", `{"id":`+id+`}`); !strings.Contains(got, "only owners") {
+		t.Fatalf("mary cancelled jim's: %q", got)
 	}
 	if got := other("cancel_scheduled", `{"id":`+id+`}`); got != "cancelled" {
 		t.Fatalf("own cancel: %q", got)
@@ -113,7 +113,7 @@ func TestScheduleLimitListCancel(t *testing.T) {
 	if got := owner("cancel_scheduled", `{"id":`+regexp.MustCompile(`job (\d+)`).FindStringSubmatch(other("list_scheduled", `{}`))[1]+`}`); got != "cancelled" {
 		t.Fatalf("owner cancel: %q", got)
 	}
-	if got := schedTurn(t, db, budi, "elsewhere", true)("cancel_scheduled", `{"id":999}`); !strings.Contains(got, "no job") {
+	if got := schedTurn(t, db, jim, "elsewhere", true)("cancel_scheduled", `{"id":999}`); !strings.Contains(got, "no job") {
 		t.Fatalf("missing: %q", got)
 	}
 }

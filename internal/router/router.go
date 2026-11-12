@@ -246,9 +246,9 @@ const memoryTags = `Hidden tags. After your reply you may add lines in exactly t
   A durable fact about this chat. CATEGORY is one of: fact, decision, plan, preference, person (person only for someone who is not shown with a handle). Skip small talk and anything already in <memories>.
 - <person id="P2">Label: short fact</person>
   A durable fact about the participant shown with that handle (their role, job, preferences, relationships, things they asked you to remember). Record facts about anyone who talks, in groups too, not only the requester. Skip anything already in their profile.
-- <person name="Omar">Label: short fact</person>
-  The same for someone who has no handle in this prompt: people from other chats, or people only talked about. Use their name; a new name gets a new profile. If search results show two people with the same name as "Omar #9249" and "Omar #1180", use the full label, tag included. Never put a fact about one person on someone else's profile.
-- <forget id="P2">exact fact text</forget> or <forget name="Omar">exact fact text</forget>
+- <person name="Jack">Label: short fact</person>
+  The same for someone who has no handle in this prompt: people from other chats, or people only talked about. Use their name; a new name gets a new profile. If search results show two people with the same name as "Jack #9249" and "Jack #1180", use the full label, tag included. Never put a fact about one person on someone else's profile.
+- <forget id="P2">exact fact text</forget> or <forget name="Jack">exact fact text</forget>
   Only when the <request> has whitelisted="yes" and asks you to forget or correct something about that person, or when that person says one of their own facts is no longer true. The fact is kept as history, marked outdated. For a correction, also add the new fact with <person>.
   Your memory of people is global: it works across all chats. Only say you saved or forgot something if you added the tag in this reply.
 `

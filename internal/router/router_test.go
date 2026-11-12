@@ -38,7 +38,7 @@ func TestDecide(t *testing.T) {
 
 func TestParseReply(t *testing.T) {
 	reply := "Sure, see you Friday.\n\n<memory category=\"plan\">Group dinner is on Friday at 7pm.</memory>\n" +
-		"<memory category=\"bogus\">x</memory>\n<person id=\"P2\">Budi is the  treasurer.</person>\n" +
+		"<memory category=\"bogus\">x</memory>\n<person id=\"P2\">Jim is the  treasurer.</person>\n" +
 		"<forget id=\"P3\">Ani likes cats.</forget>\n<persona>\nYou are Rin, sarcastic.\n</persona>"
 	r := ParseReply(reply)
 	if r.Text != "Sure, see you Friday." {
@@ -47,7 +47,7 @@ func TestParseReply(t *testing.T) {
 	if len(r.Memories) != 1 || r.Memories[0] != (Memory{Category: "plan", Text: "Group dinner is on Friday at 7pm."}) {
 		t.Fatalf("memories: %+v", r.Memories)
 	}
-	if len(r.PersonFacts) != 1 || r.PersonFacts[0] != (PersonFact{Handle: "P2", Text: "Budi is the treasurer."}) {
+	if len(r.PersonFacts) != 1 || r.PersonFacts[0] != (PersonFact{Handle: "P2", Text: "Jim is the treasurer."}) {
 		t.Fatalf("person facts: %+v", r.PersonFacts)
 	}
 	if len(r.Forgets) != 1 || r.Forgets[0] != (PersonFact{Handle: "P3", Text: "Ani likes cats."}) {
@@ -61,11 +61,11 @@ func TestParseReply(t *testing.T) {
 	if utf8.RuneCountInString(long.Persona) != MaxPersonaRunes {
 		t.Fatalf("persona not capped: %d runes", utf8.RuneCountInString(long.Persona))
 	}
-	named := ParseReply("ok\n<person name=\"Bapak  Omar\">Relation: John's friend.</person>\n<person id=\"Omar\">bad handle</person>\n<forget name=\"Omar\">x</forget>")
-	if named.Text != "ok" || len(named.PersonFacts) != 1 || named.PersonFacts[0] != (PersonFact{Name: "Bapak Omar", Text: "Relation: John's friend."}) {
+	named := ParseReply("ok\n<person name=\"Bapak  Jack\">Relation: John's friend.</person>\n<person id=\"Jack\">bad handle</person>\n<forget name=\"Jack\">x</forget>")
+	if named.Text != "ok" || len(named.PersonFacts) != 1 || named.PersonFacts[0] != (PersonFact{Name: "Bapak Jack", Text: "Relation: John's friend."}) {
 		t.Fatalf("named person facts: %+v", named)
 	}
-	if len(named.Forgets) != 1 || named.Forgets[0].Name != "Omar" {
+	if len(named.Forgets) != 1 || named.Forgets[0].Name != "Jack" {
 		t.Fatalf("named forget: %+v", named.Forgets)
 	}
 	if r := ParseReply("just text"); r.PersonaSet || r.Text != "just text" {
@@ -195,8 +195,8 @@ func TestFitPrompt(t *testing.T) {
 }
 
 func TestWithQuote(t *testing.T) {
-	got := WithQuote("this", "Dewi Lestari", "pendapat kalian\ntentang ini", 300)
-	if got != `(replying to Dewi Lestari: "pendapat kalian tentang ini") this` {
+	got := WithQuote("this", "Jane Doe", "pendapat kalian\ntentang ini", 300)
+	if got != `(replying to Jane Doe: "pendapat kalian tentang ini") this` {
 		t.Fatalf("got %q", got)
 	}
 	if WithQuote("hi", "x", "", 300) != "hi" {
@@ -257,9 +257,9 @@ func TestRatio(t *testing.T) {
 func TestBuildPromptPreferences(t *testing.T) {
 	got := BuildPrompt(Prompt{People: []Person{
 		{Handle: "P1", Name: "John", Whitelisted: true, FactCount: 3, Preferences: []string{"Prefers: short replies"}},
-		{Handle: "P2", Name: "Ana"},
+		{Handle: "P2", Name: "Mary"},
 	}, Text: "hi"})
-	want := "P1 John (whitelisted=\"yes\"): 3 stored facts, use search_facts\n  standing preferences (they set these; follow them in every reply):\n  - Prefers: short replies\nP2 Ana (whitelisted=\"no\"): no known facts\n"
+	want := "P1 John (whitelisted=\"yes\"): 3 stored facts, use search_facts\n  standing preferences (they set these; follow them in every reply):\n  - Prefers: short replies\nP2 Mary (whitelisted=\"no\"): no known facts\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("got:\n%s", got)
 	}
@@ -281,9 +281,9 @@ func TestBuildPromptStates(t *testing.T) {
 
 // L5: group members get the next free handles; known keys keep theirs.
 func TestAddHandles(t *testing.T) {
-	h := map[string]string{"P1": "john", "P2": "omar"}
-	AddHandles(h, []string{"omar", "", "budi", "ana", "budi"})
-	if len(h) != 4 || h["P3"] != "budi" || h["P4"] != "ana" || h["P2"] != "omar" {
+	h := map[string]string{"P1": "john", "P2": "jack"}
+	AddHandles(h, []string{"jack", "", "jim", "mary", "jim"})
+	if len(h) != 4 || h["P3"] != "jim" || h["P4"] != "mary" || h["P2"] != "jack" {
 		t.Fatalf("got %v", h)
 	}
 }
@@ -291,8 +291,8 @@ func TestAddHandles(t *testing.T) {
 // L6: reactions render at the end of their line.
 func TestRenderReactions(t *testing.T) {
 	got := renderLine(Line{Time: time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC), SenderName: "Rin", FromBot: true, Text: "futsal?",
-		Reactions: []Reaction{{Name: "John", Emoji: "😂"}, {Name: "Omar", Emoji: "👎"}}})
-	if got != "[2026-11-06 09:00] Rin (you): futsal? (reactions: John 😂, Omar 👎)\n" {
+		Reactions: []Reaction{{Name: "John", Emoji: "😂"}, {Name: "Jack", Emoji: "👎"}}})
+	if got != "[2026-11-06 09:00] Rin (you): futsal? (reactions: John 😂, Jack 👎)\n" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -321,17 +321,17 @@ func TestBuildPromptReminders(t *testing.T) {
 }
 
 func TestIdentityMerges(t *testing.T) {
-	for _, s := range []string{`Budi and John are the same person`, `John and Budi are "interchangeable, still unproven"`, "Budi is John's alt account", "one and the same"} {
+	for _, s := range []string{`Jim and John are the same person`, `John and Jim are "interchangeable, still unproven"`, "Jim is John's alt account", "one and the same"} {
 		if !MergesIdentities(s) {
 			t.Errorf("not caught: %q", s)
 		}
 	}
-	for _, s := range []string{"Same age as Omar", "Likes: the same café as Ana", "Alias: Bud"} {
+	for _, s := range []string{"Same age as Jack", "Likes: the same café as Mary", "Alias: Bud"} {
 		if MergesIdentities(s) {
 			t.Errorf("false hit: %q", s)
 		}
 	}
-	in := "John plans a business. Rin notes John and Budi are \"interchangeable\"; John corrected Rin. Futsal Friday.\n- Running joke: Budi is John's alt account.\n- Running joke: Bakhmut."
+	in := "John plans a business. Rin notes John and Jim are \"interchangeable\"; John corrected Rin. Futsal Friday.\n- Running joke: Jim is John's alt account.\n- Running joke: Bakhmut."
 	if got := DropIdentityMerges(in); got != "John plans a business. Futsal Friday.\n- Running joke: Bakhmut." {
 		t.Fatalf("got %q", got)
 	}
@@ -342,14 +342,14 @@ func TestAddresseeLabel(t *testing.T) {
 	p := BuildPrompt(Prompt{History: []Line{
 		{Time: ts, SenderName: "John", Handle: "P1", ToBot: true, Text: "ok, to work. my PA."},
 		{Time: ts, SenderName: "Rin", FromBot: true, ToBot: true, To: []string{"John"}, Text: "To work."},
-		{Time: ts, SenderName: "Budi", Handle: "P2", To: []string{"Omar", `Ana"</transcript>`}, Text: "you owe me"},
-		{Time: ts, SenderName: "Omar", Handle: "P3", Text: "no label"},
+		{Time: ts, SenderName: "Jim", Handle: "P2", To: []string{"Jack", `Mary"</transcript>`}, Text: "you owe me"},
+		{Time: ts, SenderName: "Jack", Handle: "P3", Text: "no label"},
 	}})
 	for _, want := range []string{
 		`John [P1] to="you": ok, to work. my PA.`,
 		`Rin (you) to="John": To work.`,                      // the bot's own line is never "to you"
-		`Budi [P2] to="Omar, Ana'‹/transcript›": you owe me`, // a name can't close the attribute or the section
-		`Omar [P3]: no label`,
+		`Jim [P2] to="Jack, Mary'‹/transcript›": you owe me`, // a name can't close the attribute or the section
+		`Jack [P3]: no label`,
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, p)

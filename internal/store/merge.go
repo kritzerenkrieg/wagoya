@@ -52,7 +52,7 @@ func (s *Store) NameProfiles(ctx context.Context) ([]NameProfile, error) {
 
 // MergeCandidates returns the real accounts whose name or nickname matches
 // name: a word of one equals, or starts, a word of the other (at least 3
-// letters), e.g. "Andi" and "Andi Pratama", or "Nikolas" and "Niko".
+// letters), e.g. "Richard" and "Richard Roe", or "Nikolas" and "Niko".
 func (s *Store) MergeCandidates(ctx context.Context, name string) ([]Account, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT p.key, p.name, p.lid, p.pn,
 		coalesce((SELECT group_concat(substr(text, 7), '|') FROM person_facts f
