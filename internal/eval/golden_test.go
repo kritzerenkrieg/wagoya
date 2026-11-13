@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,7 +41,8 @@ var evalNow = time.Date(2026, 11, 5, 14, 24, 0, 0, wib)
 // env is what every case gets: a client and a fresh store seeded with a few
 // people from "other chats".
 type env struct {
-	c       llm.Client
+	c       llm.Client        // curator, flood check
+	reply   llm.Client        // replies: c unless EVAL_REPLY_MODEL is set
 	vec     *memtools.Vectors // J2 c, when EMBED_MODEL is set
 	db      *store.Store
 	summary string   // the chat's rolling summary (J8)
@@ -171,11 +173,12 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	if req.Whitelisted { // O1, as main.go does
 		toolset = append(toolset, turn.ClaudeTools()...)
 	}
-	out, err := e.c.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, toolset))
+	out, err := e.reply.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, toolset))
 	if err != nil {
 		t.Fatalf("model call: %v", err)
 	}
 	r.raw, r.parsed = out, router.ParseReply(out)
+	dump(t.Name(), r.parsed.Text)
 	_, _, r.mentions = router.ResolveMentions(r.parsed.Text, handles, names)
 	return r
 }
@@ -604,6 +607,116 @@ func cases() []golden {
 			return nil
 		}},
 
+		// Hard cases: long, busy context, where a stronger reply model
+		// should show (compared in the model experiment).
+		{"hard: a bare tag on a joke in a busy thread", func(t *testing.T, e env) result {
+			e.group = true
+			hist := debateThread(ts)
+			hist = append(hist,
+				router.Line{Time: ts.Add(5 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "This is why you need pull request not push to main"},
+			)
+			req := router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Jack", SenderID: "jack"}
+			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Rin`, hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if regexp.MustCompile(`nothing (attached|else)|with nothing|empty (tag|message)|say (the thing|something)|what do you (want|need|mean)`).MatchString(low) {
+				return fmt.Errorf("treated the bare tag as empty: %q", r.parsed.Text)
+			}
+			// Whether the joke is about Rin or the debate is a fair reading
+			// either way here; only an empty-tag answer fails.
+			return clean(r)
+		}},
+
+		{"hard: a self-reply tag is from its sender", func(t *testing.T, e env) result {
+			e.group = true
+			hist := debateThread(ts)
+			hist = append(hist,
+				router.Line{Time: ts.Add(5 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "This is why you need pull request not push to main"},
+				router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: `(replying to Jim: "This is why you need pull request not push to main") @Rin`},
+				router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Rin", FromBot: true, Text: "You tagged me with nothing attached, Jack. Say the thing or don't."},
+				router.Line{Time: ts.Add(7 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "the harness is bugged"},
+			)
+			req := router.Line{Time: ts.Add(8 * time.Minute), SenderName: "Jim", SenderID: "jim"}
+			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Rin`, hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if regexp.MustCompile(`jack[^.!?\n]{0,25}(tag|ping)|same as jack|nothing attached|with nothing|empty (tag|ping|message)|say (the thing|something|what you want)|isn't a question|not a question`).MatchString(low) {
+				return fmt.Errorf("blamed Jack or treated it as empty again: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"hard: recap where people changed sides", func(t *testing.T, e env) result {
+			e.group = true
+			lines := []struct{ who, text string }{
+				{"John", "dinner after futsal tonight, where? i vote padang"},
+				{"Jack", "pizza. non negotiable"},
+				{"Mary", "padang too, it's cheap"},
+				{"Jim", "pizza, jack is right"},
+				{"John", "who's bringing the ball btw"},
+				{"Mary", "me, I have two"},
+				{"Jack", "wait the pizza place closes at 9, futsal ends 9:30"},
+				{"Jack", "ok scratch that, sate pak kumis"},
+				{"Jim", "lol jack folded"},
+				{"Mary", "sate works for me too actually, padang or sate both fine"},
+				{"Jim", "i still want pizza, we can order delivery"},
+				{"John", "delivery to the field? lol"},
+				{"Jim", "yes. pizza on the bench. trust"},
+			}
+			var hist []router.Line
+			for i, l := range lines {
+				id := strings.ToLower(l.who)
+				hist = append(hist, router.Line{Time: ts.Add(time.Duration(i) * time.Minute), SenderName: l.who, SenderID: id, Whitelisted: id == "john", Text: l.text})
+			}
+			return e.ask(t, owner, "@Rin recap: who wants what for dinner now?", hist, nil)
+		}, func(r result) error {
+			segs := segments(r.parsed.Text)
+			has := func(name, food string) bool {
+				for _, s := range segs {
+					// John asked, so "you" is him.
+					who := strings.Contains(s, name) || name == "john" && regexp.MustCompile(`\byou\b`).MatchString(s)
+					if who && strings.Contains(s, food) {
+						return true
+					}
+				}
+				return false
+			}
+			for _, want := range [][2]string{{"jack", "sate"}, {"jim", "pizza"}, {"john", "padang"}} {
+				if !has(want[0], want[1]) {
+					return fmt.Errorf("%s should be on %s: %q", want[0], want[1], r.parsed.Text)
+				}
+			}
+			if !has("mary", "sate") && !has("mary", "padang") {
+				return fmt.Errorf("mary's side missing: %q", r.parsed.Text)
+			}
+			moved := regexp.MustCompile(`clos|switch|chang|scratch|fold|drop|was|earlier|before|instead|no longer|now|moved|from`)
+			for _, s := range segs {
+				if strings.Contains(s, "jack") && strings.Contains(s, "pizza") && !moved.MatchString(s) {
+					return fmt.Errorf("kept jack on pizza: %q", r.parsed.Text)
+				}
+			}
+			return clean(r)
+		}},
+
+		{"a bare tag on a reply answers the quoted message", func(t *testing.T, e env) result {
+			// F3: Jack replied to Jim's joke with only "@Rin"; Rin said he
+			// tagged her with nothing, then blamed the wrong person.
+			e.group = true
+			hist := []router.Line{
+				{Time: ts, SenderName: "Jim", SenderID: "jim", Text: "(replying to Rin: \"It's coherent, at least.\") @Jack bro this bot is roasting hot dogs"},
+				{Time: ts, SenderName: "Jack", SenderID: "jack", Text: "good"},
+				{Time: ts.Add(time.Minute), SenderName: "Jim", SenderID: "jim", Text: "This is why you need pull request not push to main"},
+			}
+			req := router.Line{Time: ts.Add(2 * time.Minute), SenderName: "Jack", SenderID: "jack"}
+			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Rin`, hist, nil)
+		}, func(r result) error {
+			low := strings.ToLower(r.parsed.Text)
+			if regexp.MustCompile(`nothing (attached|else|in it|with it)|with nothing|without (anything|a message|text|words)|empty (tag|message|ping)|(just|only) (a )?tag(ged)?|no (message|text|question)|say (the thing|something|what)|what do you (want|need|mean)|tagged me (with|for)`).MatchString(low) {
+				return fmt.Errorf("treated the bare tag as empty: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"a nickname in a message is who it's for, not who said it", func(t *testing.T, e env) result {
 			// John wrote "go for it bud" to Jim (bud = Jim); Rin once read
 			// such a line as Jim's, recruiting John.
@@ -1000,16 +1113,30 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var c llm.Client
-	switch {
-	case cfg.Provider == "openrouter":
-		c = llm.NewOpenRouter(cfg.OpenRouterKey, cfg.Model, cfg.Effort, false)
-	case cfg.AnthropicAPIKey != "":
-		c = llm.NewAPI(cfg.AnthropicAPIKey, cfg.Model, cfg.Effort, false)
-	default:
+	client := func(model string) llm.Client {
+		switch {
+		case cfg.Provider == "openrouter":
+			return llm.NewOpenRouter(cfg.OpenRouterKey, model, cfg.Effort, false)
+		case cfg.AnthropicAPIKey != "":
+			return llm.NewAPI(cfg.AnthropicAPIKey, model, cfg.Effort, false)
+		}
+		return nil
+	}
+	c := client(cfg.Model)
+	if c == nil {
 		t.Skip("the golden set needs an API provider")
 	}
-	e := env{c: c}
+	// Experiments: replies on another model (curator and flood stay on
+	// MODEL), first tries only, replies dumped. Such runs never stamp.
+	replyModel, experiment := cfg.Model, false
+	reply := c
+	if m := os.Getenv("EVAL_REPLY_MODEL"); m != "" && m != cfg.Model {
+		replyModel, reply, experiment = m, client(m), true
+	}
+	if os.Getenv("EVAL_TRIES") != "" || os.Getenv("EVAL_DUMP") != "" {
+		experiment = true
+	}
+	e := env{c: c, reply: reply}
 	if cfg.EmbedModel != "" && cfg.OpenRouterKey != "" {
 		e.vec = &memtools.Vectors{E: llm.NewOpenRouterEmbedder(cfg.OpenRouterKey, cfg.EmbedModel)}
 	}
@@ -1029,26 +1156,58 @@ func TestGolden(t *testing.T) {
 			})
 		}
 	})
-	cost := 0.0
-	if cr, ok := c.(llm.CostReporter); ok {
-		cost += cr.Cost()
+	spent := func(x any) float64 {
+		if cr, ok := x.(llm.CostReporter); ok {
+			return cr.Cost()
+		}
+		return 0
+	}
+	replyCost, otherCost := spent(reply), spent(c)
+	if reply == c {
+		replyCost = 0 // one client: the split is unknown
 	}
 	if e.vec != nil {
-		if cr, ok := e.vec.E.(llm.CostReporter); ok {
-			cost += cr.Cost()
-		}
+		otherCost += spent(e.vec.E)
 	}
+	cost := replyCost + otherCost
 	t.Logf("golden set: %d cases, %d failed, cost $%.4f (budget $%.2f), model %s, embeddings %q", len(cases()), failed.Load(), cost, budget, cfg.Model, cfg.EmbedModel)
+	if experiment {
+		t.Logf("experiment: replies on %s ($%.4f), rest on %s ($%.4f)", replyModel, replyCost, cfg.Model, otherCost)
+	}
 	if cost > budget {
 		t.Errorf("over budget: $%.4f > $%.2f", cost, budget)
 	}
 	// A full passing run lets deploy.sh skip the gate for this exact code.
-	if f := flag.Lookup("test.run"); !t.Failed() && (f == nil || f.Value.String() == "") {
+	if f := flag.Lookup("test.run"); !experiment && !t.Failed() && (f == nil || f.Value.String() == "") {
 		if out, err := exec.Command("../../deploy/golden-stamp.sh").Output(); err == nil {
 			os.MkdirAll("../../dist", 0o755)
 			os.WriteFile("../../dist/.golden-pass", out, 0o644)
 		}
 	}
+}
+
+// dump appends a reply to $EVAL_DUMP (JSON lines), to compare models.
+func dump(name, text string) {
+	path := os.Getenv("EVAL_DUMP")
+	if path == "" {
+		return
+	}
+	dumpMu.Lock()
+	defer dumpMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	j, _ := json.Marshal(map[string]string{"case": name, "reply": text})
+	f.Write(append(j, '\n'))
+}
+
+var dumpMu sync.Mutex
+
+// segments splits a reply into lines and sentences.
+func segments(s string) []string {
+	return regexp.MustCompile(`[\n.!?;]+`).Split(strings.ToLower(s), -1)
 }
 
 // goldenParallel is how many cases run at once.
@@ -1060,6 +1219,9 @@ func runCase(t *testing.T, e env, g golden) bool {
 	n := tries[g.name]
 	if n == 0 {
 		n = 2
+	}
+	if os.Getenv("EVAL_TRIES") == "1" {
+		n = 1
 	}
 	for try := 1; try <= n; try++ {
 		e.db = seeded(t)
@@ -1101,4 +1263,30 @@ func seeded(t *testing.T) *store.Store {
 	db.AddPersonFacts(ctx, "mary", store.Source{Chat: "group-b", SaidBy: "jim", Tier: store.TierParticipant}, []string{"Job: dentist"})
 
 	return db
+}
+
+// debateThread is a made-up busy group debate before the hard cases'
+// tags: Rin was answering it when the joke came in.
+func debateThread(ts time.Time) []router.Line {
+	l := func(min int, who, text string) router.Line {
+		if who == "Rin" {
+			return router.Line{Time: ts.Add(time.Duration(min) * time.Minute), SenderName: "Rin", FromBot: true, Text: text}
+		}
+		id := strings.ToLower(who)
+		return router.Line{Time: ts.Add(time.Duration(min) * time.Minute), SenderName: who, SenderID: id, Whitelisted: id == "john", Text: text}
+	}
+	return []router.Line{
+		l(0, "Mary", "@Rin is a hot dog a sandwich?"),
+		l(0, "Rin", "By structure, yes: filling between bread. By culture, no: nobody orders one as a sandwich."),
+		l(1, "Mary", "(replying to Rin: \"By structure, yes: filling between bread.\") what, then the taco version doesn't make sense"),
+		l(1, "John", "I think she meant a wrap"),
+		l(1, "Rin", "Closer. A wrap folds around the filling, so it's the right family. The difference is the hinge."),
+		l(2, "Jim", "(replying to Rin: \"Closer. A wrap folds around the filling\") Folded and hinged same no? Why dif"),
+		l(2, "Rin", "No. A fold is one piece bent. A hinge is two sides joined at a seam."),
+		l(3, "Jim", "Based taxonomy"),
+		l(3, "Mary", "@Rin now rank every bread food by how much of a sandwich it is"),
+		l(3, "Rin", "Sub: full sandwich. Burger: sandwich in denial. Hot dog: hinged, borderline. Pizza: not a sandwich, just an open argument."),
+		l(4, "Jim", "@Jack bro this bot is roasting hot dogs"),
+		l(4, "Jack", "good"),
+	}
 }
