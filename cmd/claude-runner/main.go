@@ -8,8 +8,8 @@
 //	{"host": "kritz", "remote": "~/wagoya/wagoya",
 //	 "roots": ["~/Projects", "~/Programs"]}
 //
-// Repos are the git checkouts directly under the roots, named by folder,
-// found again on every poll (Q1). A new project is made in the first root.
+// Repos are the git checkouts under the roots (up to 3 folders deep, not
+// inside another repo), named by folder, found again on every poll (Q1). A new project is made in the first root.
 package main
 
 import (
@@ -90,26 +90,41 @@ func loadConfig(path string) (config, error) {
 	return c, nil
 }
 
-// findRepos lists the git checkouts directly under the roots, by folder
-// name. A name in two roots goes to the first root.
+// repoDepth is how deep under a root the runner looks for repos (Q1):
+// 1 is the root's own children, so 3 reaches ~/Claude/mcp/accurate-mcp.
+const repoDepth = 3
+
+// findRepos lists the git checkouts under the roots, up to repoDepth deep,
+// by folder name. It doesn't look inside a repo, a hidden folder or
+// node_modules. A name found twice goes to the first root, then to the
+// shallower folder.
 func findRepos(roots []string) map[string]string {
 	repos := map[string]string{}
 	for _, root := range roots {
-		ents, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
-		for _, e := range ents {
-			dir := filepath.Join(root, e.Name())
-			if !e.IsDir() || !nameRe.MatchString(e.Name()) {
-				continue
+		level := []string{root}
+		for depth := 1; depth <= repoDepth && len(level) > 0; depth++ {
+			var next []string
+			for _, parent := range level {
+				ents, err := os.ReadDir(parent)
+				if err != nil {
+					continue
+				}
+				for _, e := range ents {
+					name := e.Name()
+					if !e.IsDir() || strings.HasPrefix(name, ".") || name == "node_modules" {
+						continue
+					}
+					dir := filepath.Join(parent, name)
+					if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+						next = append(next, dir)
+						continue
+					}
+					if _, dup := repos[name]; !dup && nameRe.MatchString(name) {
+						repos[name] = dir
+					}
+				}
 			}
-			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-				continue
-			}
-			if _, dup := repos[e.Name()]; !dup {
-				repos[e.Name()] = dir
-			}
+			level = next
 		}
 	}
 	return repos

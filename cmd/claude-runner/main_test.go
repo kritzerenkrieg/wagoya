@@ -409,6 +409,33 @@ func TestFindRepos(t *testing.T) {
 	}
 }
 
+// TestFindReposNested: repos up to repoDepth deep are found, but not ones
+// inside another repo, a hidden folder or node_modules, or deeper (Q1).
+func TestFindReposNested(t *testing.T) {
+	r := t.TempDir()
+	for _, d := range []string{
+		"mcp/accurate-mcp/.git", "work/raspi/.git", "a/b/deep3/.git", "a/b/c/deep4/.git",
+		"top/.git", "top/inner/.git", ".hidden/secret/.git", "web/node_modules/pkg/.git",
+		"x/top/.git", // same name deeper: the shallower one wins
+		"odd name/ok/.git",
+	} {
+		if err := os.MkdirAll(filepath.Join(r, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := findRepos([]string{r})
+	want := map[string]string{"accurate-mcp": "mcp/accurate-mcp", "raspi": "work/raspi",
+		"deep3": "a/b/deep3", "top": "top", "ok": "odd name/ok"}
+	if len(got) != len(want) {
+		t.Fatalf("repos = %v", got)
+	}
+	for n, d := range want {
+		if got[n] != filepath.Join(r, d) {
+			t.Errorf("%s = %q, want %q", n, got[n], filepath.Join(r, d))
+		}
+	}
+}
+
 func TestLoadConfigRoots(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
