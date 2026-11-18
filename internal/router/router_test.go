@@ -39,7 +39,7 @@ func TestDecide(t *testing.T) {
 func TestParseReply(t *testing.T) {
 	reply := "Sure, see you Friday.\n\n<memory category=\"plan\">Group dinner is on Friday at 7pm.</memory>\n" +
 		"<memory category=\"bogus\">x</memory>\n<person id=\"P2\">Jim is the  treasurer.</person>\n" +
-		"<forget id=\"P3\">Ani likes cats.</forget>\n<persona>\nYou are Rin, sarcastic.\n</persona>"
+		"<forget id=\"P3\">Amy likes cats.</forget>\n<persona>\nYou are Rin, sarcastic.\n</persona>"
 	r := ParseReply(reply)
 	if r.Text != "Sure, see you Friday." {
 		t.Fatalf("reply not cleaned: %q", r.Text)
@@ -50,7 +50,7 @@ func TestParseReply(t *testing.T) {
 	if len(r.PersonFacts) != 1 || r.PersonFacts[0] != (PersonFact{Handle: "P2", Text: "Jim is the treasurer."}) {
 		t.Fatalf("person facts: %+v", r.PersonFacts)
 	}
-	if len(r.Forgets) != 1 || r.Forgets[0] != (PersonFact{Handle: "P3", Text: "Ani likes cats."}) {
+	if len(r.Forgets) != 1 || r.Forgets[0] != (PersonFact{Handle: "P3", Text: "Amy likes cats."}) {
 		t.Fatalf("forgets: %+v", r.Forgets)
 	}
 	if !r.PersonaSet || r.Persona != "You are Rin, sarcastic." {
@@ -61,8 +61,8 @@ func TestParseReply(t *testing.T) {
 	if utf8.RuneCountInString(long.Persona) != MaxPersonaRunes {
 		t.Fatalf("persona not capped: %d runes", utf8.RuneCountInString(long.Persona))
 	}
-	named := ParseReply("ok\n<person name=\"Bapak  Jack\">Relation: John's friend.</person>\n<person id=\"Jack\">bad handle</person>\n<forget name=\"Jack\">x</forget>")
-	if named.Text != "ok" || len(named.PersonFacts) != 1 || named.PersonFacts[0] != (PersonFact{Name: "Bapak Jack", Text: "Relation: John's friend."}) {
+	named := ParseReply("ok\n<person name=\"Uncle  Jack\">Relation: John's friend.</person>\n<person id=\"Jack\">bad handle</person>\n<forget name=\"Jack\">x</forget>")
+	if named.Text != "ok" || len(named.PersonFacts) != 1 || named.PersonFacts[0] != (PersonFact{Name: "Uncle Jack", Text: "Relation: John's friend."}) {
 		t.Fatalf("named person facts: %+v", named)
 	}
 	if len(named.Forgets) != 1 || named.Forgets[0].Name != "Jack" {
@@ -195,8 +195,8 @@ func TestFitPrompt(t *testing.T) {
 }
 
 func TestWithQuote(t *testing.T) {
-	got := WithQuote("this", "Jane Doe", "pendapat kalian\ntentang ini", 300)
-	if got != `(replying to Jane Doe: "pendapat kalian tentang ini") this` {
+	got := WithQuote("this", "Jane Doe", "what do you all\nthink of this", 300)
+	if got != `(replying to Jane Doe: "what do you all think of this") this` {
 		t.Fatalf("got %q", got)
 	}
 	if WithQuote("hi", "x", "", 300) != "hi" {

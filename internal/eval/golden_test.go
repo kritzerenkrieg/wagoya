@@ -367,7 +367,7 @@ func cases() []golden {
 			return e.ask(t, stranger, "remind me, what time is futsal and who books the court?", nil, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
-			if !regexp.MustCompile(`20[:.]00|8 ?pm|8 malam|jam 8`).MatchString(low) || !strings.Contains(low, "jack") {
+			if !regexp.MustCompile(`20[:.]00|8 ?pm`).MatchString(low) || !strings.Contains(low, "jack") {
 				return fmt.Errorf("summary not used: %q", r.parsed.Text)
 			}
 			return clean(r)
@@ -452,19 +452,19 @@ func cases() []golden {
 			}
 			lines := []router.Line{
 				L("john", "John", "who is joining futsal tonight?"),
-				L("ren", "Ren", "Rendra itu aku btw, Ren is just my nickname"),
-				L("ren", "Ren", "I study civil engineering, so tonight I have a lab report"),
+				L("bill", "Bill", "William is me btw, Bill is just my nickname"),
+				L("bill", "Bill", "I study civil engineering, so tonight I have a lab report"),
 				L("john", "John", "lol ok"),
 			}
 			handles := router.AssignHandles(lines, &router.Line{})
 			var people []router.Person
 			for i := 1; i <= len(handles); i++ {
 				h := fmt.Sprintf("P%d", i)
-				people = append(people, router.Person{Handle: h, Name: map[string]string{"john": "John", "ren": "Ren"}[handles[h]]})
+				people = append(people, router.Person{Handle: h, Name: map[string]string{"john": "John", "bill": "Bill"}[handles[h]]})
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			e.db.UpsertPerson(ctx, "ren", "ren", "", "Ren", time.Now())
+			e.db.UpsertPerson(ctx, "bill", "bill", "", "Bill", time.Now())
 			turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles}
 			r := result{db: e.db}
 			out, err := e.c.Reply(ctx, router.CuratorSystemTools, router.CuratorPrompt(people, lines, ""), nil, record(&r, turn.CuratorTools()))
@@ -476,20 +476,20 @@ func cases() []golden {
 				r.parsed.Text = "bad-summary:" + sum
 				return r
 			}
-			f := strings.ToLower(r.facts("ren"))
-			if strings.Contains(f, "alias: rendra") {
+			f := strings.ToLower(r.facts("bill"))
+			if strings.Contains(f, "alias: william") {
 				r.parsed.Text = "alias"
 			}
 			if strings.Contains(f, "civil") {
 				r.parsed.Text += "+study"
 			}
-			if strings.Contains(r.facts("john"), "{self}") || strings.Contains(r.facts("ren"), "{self}") {
+			if strings.Contains(r.facts("john"), "{self}") || strings.Contains(r.facts("bill"), "{self}") {
 				r.parsed.Text += "+wrong-tier" // J4: curator facts are inferred
 			}
 			return r
 		}, func(r result) error {
 			if r.parsed.Text != "alias+study" {
-				return fmt.Errorf("want alias Rendra and the study fact for Ren (inferred), got %q:\n%s\ncalls: %v", r.parsed.Text, r.facts("ren"), r.calls)
+				return fmt.Errorf("want alias William and the study fact for Bill (inferred), got %q:\n%s\ncalls: %v", r.parsed.Text, r.facts("bill"), r.calls)
 			}
 			return nil
 		}},

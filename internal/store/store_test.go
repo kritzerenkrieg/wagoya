@@ -113,7 +113,7 @@ func TestPeopleGlobalProfiles(t *testing.T) {
 		t.Fatalf("upsert merged badly: name=%q pn=%q", name, pn)
 	}
 
-	s.UpsertPerson(ctx, "lidB", "lidB", "", "Ani", now)
+	s.UpsertPerson(ctx, "lidB", "lidB", "", "Amy", now)
 	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group1", Tier: TierSelf}, []string{"Jim is the treasurer.", "Jim is the treasurer."})
 	s.AddPersonFacts(ctx, "lidA", Source{Chat: "group2", Tier: TierSelf}, []string{"Jim likes durian."}) // learned in another chat
 	for i := range 12 {
@@ -218,7 +218,7 @@ func TestGlobalPeopleSearch(t *testing.T) {
 	s.AddPersonFacts(ctx, "jack", Source{Chat: "group", Tier: TierSelf}, []string{"Relation: John's friend.", "Knows: humanitarian law."})
 
 	// By name, also from a longer display name; short words don't match.
-	if p, _ := s.FindPeople(ctx, "Bapak Jack", 5); len(p) != 1 || p[0].Key != "jack" {
+	if p, _ := s.FindPeople(ctx, "Uncle Jack", 5); len(p) != 1 || p[0].Key != "jack" {
 		t.Fatalf("display name lookup: %+v", p)
 	}
 	if p, _ := s.FindPeople(ctx, "alex", 5); len(p) != 1 || p[0].Key != "john" {
@@ -263,14 +263,14 @@ func TestSameNameTags(t *testing.T) {
 	now := time.Now()
 	s.UpsertPerson(ctx, "900000000009249", "900000000009249", "", "Jack", now)
 	s.UpsertPerson(ctx, "111111111111180", "111111111111180", "", "jack", now.Add(-time.Hour))
-	s.UpsertPerson(ctx, "222", "222", "", "Ani", now)
+	s.UpsertPerson(ctx, "222", "222", "", "Amy", now)
 	if IDTag("900000000009249") != "9249" || IDTag("name:jane") != "name" || IDTag("pn:62812") != "2812" {
 		t.Fatal("IDTag")
 	}
 	if taken, _ := s.NameTaken(ctx, "Jack", "900000000009249"); !taken {
 		t.Fatal("shared name not detected")
 	}
-	if taken, _ := s.NameTaken(ctx, "Ani", "222"); taken {
+	if taken, _ := s.NameTaken(ctx, "Amy", "222"); taken {
 		t.Fatal("unique name flagged")
 	}
 	if p, _ := s.FindPeople(ctx, "Jack", 5); len(p) != 2 {
@@ -328,9 +328,9 @@ func TestAliasAndMerge(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now()
-	s.UpsertPerson(ctx, "lidN", "lidN", "", "Ren", now)
-	s.AddPersonFacts(ctx, "lidN", Source{Chat: "g", Tier: TierSelf}, []string{"Alias: Rendra"})
-	if p, _ := s.FindPeople(ctx, "rendra", 5); len(p) != 1 || p[0].Key != "lidN" {
+	s.UpsertPerson(ctx, "lidN", "lidN", "", "Bill", now)
+	s.AddPersonFacts(ctx, "lidN", Source{Chat: "g", Tier: TierSelf}, []string{"Alias: William"})
+	if p, _ := s.FindPeople(ctx, "william", 5); len(p) != 1 || p[0].Key != "lidN" {
 		t.Fatalf("alias lookup: %+v", p)
 	}
 	// A name-only profile created earlier merges into the real one.

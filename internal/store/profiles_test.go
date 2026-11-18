@@ -39,12 +39,12 @@ func TestProfiles(t *testing.T) {
 	}
 
 	// H3 merge: a name-only profile moves to the real person if they have none.
-	ghost, _ := s.PersonByName(ctx, "Ren", time.Now())
-	s.SetProfile(ctx, ghost.Key, "Ren from futsal", "first")
+	ghost, _ := s.PersonByName(ctx, "Bill", time.Now())
+	s.SetProfile(ctx, ghost.Key, "Bill from futsal", "first")
 	if ok, err := s.MergePerson(ctx, ghost.Key, "bob"); !ok || err != nil {
 		t.Fatalf("merge: %v %v", ok, err)
 	}
-	if p, _ := s.GetProfile(ctx, "bob"); p.Text != "Ren from futsal" {
+	if p, _ := s.GetProfile(ctx, "bob"); p.Text != "Bill from futsal" {
 		t.Fatalf("moved: %+v", p)
 	}
 	if p, _ := s.GetProfile(ctx, ghost.Key); p.Text != "" {

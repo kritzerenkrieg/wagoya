@@ -560,7 +560,7 @@ type PersonRef struct {
 
 // FindPeople finds known people by name, case-insensitively (D3, D7). A
 // person matches when their name equals the query, contains it, or is a word
-// of it ("Bapak Jack" finds "Jack"). Exact matches come first, then the
+// of it ("Uncle Jack" finds "Jack"). Exact matches come first, then the
 // most recently seen.
 func (s *Store) FindPeople(ctx context.Context, name string, limit int) ([]PersonRef, error) {
 	// "Jack #9249" picks one of several Omars by their ID tag.
