@@ -54,6 +54,7 @@ flowchart LR
 - [x] Persona updates honoured only for whitelisted requesters (D2). Done when: a router test parses the tag and main applies it only when the requester is whitelisted.
 - [x] People profiles keyed by LID/number with handles (D3, D4). Done when: tests cover handle assignment, fact add/forget, global lookup across chats, and tag injection from chat text.
 - [ ] Live check (D1-D4). Done when: the Phase D exit check passes.
+- [ ] Lively, no stock fillers (D8). Done when: the golden cases "doesn't open with a stock filler it keeps repeating" and "plays along with a joke instead of asking for a source" pass, and live, a day of group banter has no run of "Noted." replies.
 
 ## Phase E: Web access
 
@@ -208,6 +209,7 @@ flowchart LR
 - [ ] Own web tools (W1). Done when: tools tests cover search trimming, page offsets, bad URLs and daemon errors; the OpenRouter test shows no `openrouter:` server tools are sent; `WEBSEARCH_LIVE=http://127.0.0.1:3210 go test ./internal/tools -run Live` passes against the daemon; and live, after deploy `open-websearch.service` is running and "@Rin search the web: ..." makes Rin call `web_search`.
 - [ ] 96k per call (W2). Done when: llm tests cover withholding results past the cap and `tool_choice` none; and live, no single call over 96k tokens shows in a day of `cost` lines.
 - [ ] Search instead of hedging (W3). Done when: the golden cases "searches the web for current figures instead of hedging" and "doesn't search the web for small talk" pass, and live, a question about current figures gets a sourced answer without being told to search.
+- [ ] Dig, then answer from the results (W4). Done when: the golden case "answers a comparison from the page it read instead of saying it found nothing" passes, and live, a model-comparison question gets figures from the pages it read.
 
 ## Cycle: feature and maintenance
 

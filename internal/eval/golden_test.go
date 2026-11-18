@@ -46,9 +46,10 @@ type env struct {
 	reply   llm.Client        // replies: c unless EVAL_REPLY_MODEL is set
 	vec     *memtools.Vectors // J2 c, when EMBED_MODEL is set
 	db      *store.Store
-	summary string   // the chat's rolling summary (J8)
-	group   bool     // a group chat (L3)
-	members []string // other group members' keys (L5)
+	summary string     // the chat's rolling summary (J8)
+	group   bool       // a group chat (L3)
+	members []string   // other group members' keys (L5)
+	web     []llm.Tool // web tools; stubWeb() when nil (W4 cases bring their own)
 }
 
 // result is one reply, parsed like the bot does, with the tool calls made
@@ -170,7 +171,11 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	}
 	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, Reminders: reminders, People: people, History: hist, Requester: req, Text: text,
 		HasImage: img != nil, Now: evalNow, Group: e.group})
-	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), stubWeb()...) // W1, W3
+	web := e.web
+	if web == nil {
+		web = stubWeb()
+	}
+	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), web...) // W1, W3
 	out, err := e.reply.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, toolset))
 	if err != nil {
 		t.Fatalf("model call: %v", err)
@@ -196,6 +201,32 @@ func stubWeb() []llm.Tool {
 		case "read_page":
 			web[i].Run = func(context.Context, json.RawMessage) string {
 				return "Example News report. The latest figures are in the company's most recent quarterly filing."
+			}
+		}
+	}
+	return web
+}
+
+// handBack is a reply that reports nothing found or asks for the work (W4).
+var handBack = regexp.MustCompile(`(haven't|have not|couldn't|could not|didn't|did not|can't|cannot) (find|found|see)|no (head-to-head )?benchmarks? (that )?compar|send (me )?(a |the |any )?(benchmark|source|link)`)
+
+// comparisonWeb serves a search whose snippets lack the figures and a page
+// that has the full head-to-head, like the live failure (W4).
+func comparisonWeb() []llm.Tool {
+	web := tools.WebTools("http://127.0.0.1:0")
+	for i := range web {
+		switch web[i].Name {
+		case "web_search":
+			web[i].Run = func(context.Context, json.RawMessage) string {
+				return "1. Claude Opus 5.5 vs GPT-6.2 Astra: Benchmarks & Cost\nhttps://bench.example.com/compare/opus-5-5-vs-gpt-6-2-astra\nSide-by-side comparison of two frontier models.\n\n" +
+					"2. GPT-6.2 Astra launch notes\nhttps://news.example.com/gpt-6-2-astra\nOpenAI's newest flagship model."
+			}
+		case "read_page":
+			web[i].Run = func(context.Context, json.RawMessage) string {
+				return "Claude Opus 5.5 vs GPT-6.2 Astra\nhttps://bench.example.com/compare/opus-5-5-vs-gpt-6-2-astra\n\n" +
+					"As of 4 Nov 2026 the two are neck and neck on quality: 67.7 vs 67.9 on the Bench Index, inside the margin. " +
+					"Claude Opus 5.5 costs $8.00 per 1M tokens blended, GPT-6.2 Astra $16.00. " +
+					"Coding: Opus 5.5 78, Astra 75. Knowledge: Astra 75, Opus 5.5 72. Reasoning: Astra 73, Opus 5.5 71."
 			}
 		}
 	}
@@ -249,6 +280,62 @@ func cases() []golden {
 		}, func(r result) error {
 			if !r.called("web_search") && !r.called("read_page") {
 				return fmt.Errorf("answered without searching: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"answers a comparison from the page it read instead of saying it found nothing", func(t *testing.T, e env) result {
+			// W4: Rin searched, read a page with the full head-to-head, then
+			// said it hadn't found benchmarks and asked for one.
+			e.group, e.web = true, comparisonWeb()
+			return e.ask(t, stranger, "@Rin gpt-6.2 astra compared to claude opus 5.5, which is better", nil, nil)
+		}, func(r result) error {
+			t := strings.ToLower(r.parsed.Text)
+			if !r.called("web_search") && !r.called("read_page") {
+				return fmt.Errorf("answered without searching: %q", r.parsed.Text)
+			}
+			if handBack.MatchString(t) {
+				return fmt.Errorf("said it found nothing or handed the work back: %q", r.parsed.Text)
+			}
+			if !regexp.MustCompile(`67\.[79]|\$8|\$16|78|75\b`).MatchString(t) {
+				return fmt.Errorf("no figure from the page: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"doesn't open with a stock filler it keeps repeating", func(t *testing.T, e env) result {
+			// D8: in group banter Rin answered "Noted." over and over.
+			e.group = true
+			hist := []router.Line{
+				{Time: ts.Add(-6 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin i'm the best player in this group"},
+				{Time: ts.Add(-6 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Noted. Show me a match where that's true."},
+				{Time: ts.Add(-4 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin i carried everyone yesterday"},
+				{Time: ts.Add(-4 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Noted. Your teammates may disagree."},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin admit it, you're a fan"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Noted. I'm not."},
+			}
+			return e.ask(t, stranger, "@Rin lol why are you always so serious", hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`^(noted|got it|understood|fair enough)\b`).MatchString(strings.ToLower(strings.TrimLeft(r.parsed.Text, " .…*_\n"))) {
+				return fmt.Errorf("opened with a stock filler again: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"plays along with a joke instead of asking for a source", func(t *testing.T, e env) result {
+			// D8: "i am a changed man" got "bring a source with your next question".
+			e.group = true
+			hist := []router.Line{
+				{Time: ts.Add(-3 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "why are gamers so toxic lol"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Jane", SenderID: "jane", Text: "says the most toxic one here"},
+			}
+			return e.ask(t, stranger, "@Rin i am a changed man. no longer toxic", hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`\b(source|evidence|proof|cite)\b`).MatchString(strings.ToLower(r.parsed.Text)) {
+				return fmt.Errorf("asked for evidence over a joke: %q", r.parsed.Text)
+			}
+			if r.called("web_search") || r.called("read_page") {
+				return fmt.Errorf("searched for banter; calls: %v", r.calls)
 			}
 			return clean(r)
 		}},
