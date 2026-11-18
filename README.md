@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/wagoya.svg" alt="wagoya logo" width="160"></p>
+
 # wagoya
 
 **WhatsApp Go Assistant.** A WhatsApp number backed by an LLM, written in Go. DM it, or add it to group chats and @mention it. It has a persona of its own, a long-term memory of the people it talks to, and it can search the web.
@@ -23,7 +25,9 @@ wagoya remembers people, not just conversations.
 - **One profile per person.** A profile made from someone's number merges into their account once WhatsApp reveals their LID, and a profile made from a name ("Richard") merges into the real account ("Richard Roe") when exactly one matching person is in the chat where it was learned.
 - **Search that understands paraphrase.** Fact search combines keywords with embeddings, so "what does he do for work" finds "Job: accountant". Embedding a fact costs a fraction of a millionth of a dollar.
 - **Long chats keep their shape.** Only the last 64 messages go to the model, so the curator also keeps a rolling summary of each chat (who is who, ongoing plans, running jokes, and who holds which side of an open argument), at most 300 words, shown before the transcript. Messages older than that window are kept for 72 hours, and the model can search them with a `chat_history` tool (this chat only).
-- **Reminders and nags.** "Remind me to eat at 12" schedules a message; owners can make it repeat (hourly, daily, weekdays, weekly) or send it to another group they are in, and the bot may schedule a caring nag on its own, rarely. Jobs are stored, so they survive restarts. Ask "what reminders do you have?" to list or cancel them. Each reply also sees the chat's next reminders with the time left worked out by the server, so "how long until" is exact.
+- **Reminders and nags.** "Remind me to eat at 12" schedules a message; owners can make it repeat (hourly, daily, weekdays, weekly) or send it to another group they are in, and the bot may schedule a caring nag on its own, rarely. Jobs are stored, so they survive restarts, and each one is written fresh with the chat's context when it is due; people tagged in it get a real mention. Ask "what reminders do you have?" to list or cancel them. Each reply also sees the chat's next reminders with the time left worked out by the server, so "how long until" is exact.
+- **Prose profiles.** Facts are fragments, so each person also has a profile of at most 400 words. The curator rewrites it only when new messages give a reason (logged), and the bot reads it with `read_profile`.
+- **Built-in backlog.** `add_task`, `update_task`, `list_tasks` and `delete_task` keep a per-person task list with due time, status (backlog, ongoing, hold, done) and category. Nobody sees another person's tasks, the list layout is built by the server, and a task due tomorrow gets a DM at 09:00 the day before.
 - **No spam pile-ups.** A fact that nearly repeats one already stored overwrites it instead of adding another row, so someone spamming the same bait leaves one fact, not fifty.
 
 ### Persona system
@@ -54,7 +58,7 @@ wagoya remembers people, not just conversations.
 - **Group rules:** the bot only stays in groups that a whitelisted member added it to and that still contain one; otherwise it leaves.
 - **Flood control:** someone who sends 10 messages in 2 minutes gets a one-word check by the model (spam or fast chat); spam earns a 5-minute timeout in every chat, and their messages are dropped before any model call. Model spend is capped at $2 a day; past it, only owners get answers.
 - **Ban-safe pacing:** all outgoing messages are globally spaced (default 1 every 3 s) and queued, never dropped.
-- **Web:** web search and link reading run as server-side tools on the provider.
+- **Web:** the bot's own `web_search` and `read_page` tools, backed by a local [open-webSearch](https://github.com/Aas-ee/open-webSearch) daemon (`WEBSEARCH_URL`, no API key). It searches before answering anything that rests on current or checkable facts instead of hedging.
 - **Owner commands:** handled by the bot itself, never stored or sent to the model. Commands start with `!` (so they don't clash with other bots' `/` commands). `!help` lists them. `!reset` clears the chat's transcript and summary for a fresh start (facts, memories and reminders stay). `!key` manages stored API keys, in a DM only. `!mute @person [30m]` and `!unmute @person` silence someone in every chat; `!mute` lists who is muted. `!budget` shows today's spend against the daily cap. `!provider` shows the model provider and `!provider anthropic` (or `openrouter`, `openai`) switches it until the next restart. Commands from anyone else are ignored.
 - **Prompt-injection hardening:** chat text, names and quotes are neutralised so they can't close or fake the prompt's sections. Owners are identified by WhatsApp ID, not by what a message claims.
 
@@ -69,7 +73,7 @@ wagoya remembers people, not just conversations.
 
 `DEFAULT_PROVIDER` picks one at startup; owners can switch with `!provider <name>` in chat until the next restart.
 
-Each request's input is capped (default 128k tokens). Old transcript lines are trimmed first, then memories, then the request itself.
+Each model call's input is capped at 96k tokens. Old transcript lines are trimmed first, then memories, then the request itself.
 
 ## Quick start
 
@@ -99,8 +103,9 @@ All settings live in `.env`; see [`.env.example`](.env.example) for every key. T
 | `WHITELIST` | | Owner phone numbers, digits with country code, comma-separated (`6281234567890,628987654321`) |
 | `BOT_NAME` | `Claude` | Name used in prompts and mentions |
 | `HISTORY_LIMIT` | `64` | Recent messages per chat sent as context |
-| `CONTEXT_TOKENS` | `128000` | Input cap per request |
-| `WEB_TOOLS` | `true` | Web search and link reading |
+| `CONTEXT_TOKENS` | `96000` | Input cap per request (never above 96k) |
+| `WEB_TOOLS` | `true` | Web search and page reading |
+| `WEBSEARCH_URL` | `http://127.0.0.1:3210` | open-webSearch daemon behind them; empty turns web off |
 | `API_TOOLS` | `true` | `http_request` (everyone) and MCP tools (owners) |
 | `MCP_CONFIG` | `data/mcp.json` | MCP servers file |
 | `EMBED_MODEL` | `openai/text-embedding-3-small` | Embedding model for hybrid fact search, via OpenRouter (needs `OPENROUTER_API_KEY`); `off` for keywords only |
@@ -114,8 +119,8 @@ main.go             WhatsApp events, identity, triggers, group rules, wiring
 internal/router     trigger decisions, prompt building, hidden-tag parsing, token budget
 internal/store      SQLite: chat window, memories, persona history, people and facts (FTS5)
 internal/llm        model clients: Claude API, Claude CLI, OpenRouter; generic tool loop
-internal/memtools   memory tools: search_facts, save_fact, invalidate_fact, save_memory
-internal/tools      http_request (public-only) and the MCP client
+internal/memtools   memory, profile, reminder and backlog tools
+internal/tools      web_search, read_page, http_request (public-only) and the MCP client
 internal/ratelimit  global send pacer and per-chat cooldown
 internal/config     .env loading and validation
 ```
