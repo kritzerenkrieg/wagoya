@@ -212,6 +212,24 @@ func TestWithQuote(t *testing.T) {
 	}
 }
 
+// F4: an unquoted DM answers the bot's message only when it came right before.
+func TestImplicitQuote(t *testing.T) {
+	ask := Line{SenderName: "Rin", FromBot: true, Text: "Which spelling, A or B?"}
+	user := Line{SenderName: "John", Text: "what clan is this"}
+	if q, ok := ImplicitQuote([]Line{user, ask}); !ok || q != ask.Text {
+		t.Fatalf("after the bot's question: got %q, %v", q, ok)
+	}
+	if _, ok := ImplicitQuote([]Line{ask, user}); ok {
+		t.Fatal("quoted the bot although the user spoke last")
+	}
+	if _, ok := ImplicitQuote(nil); ok {
+		t.Fatal("quoted something in an empty chat")
+	}
+	if _, ok := ImplicitQuote([]Line{{FromBot: true, Text: "  "}}); ok {
+		t.Fatal("quoted an empty bot line")
+	}
+}
+
 // J5: the top 3 memories and the requester outlast history, other memories,
 // the summary and other profiles.
 func TestFitPromptKeepsTopMemories(t *testing.T) {

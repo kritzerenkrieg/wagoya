@@ -64,6 +64,10 @@ flowchart LR
 - [x] Decide who may use the web (E2).
 - [ ] Live check in WhatsApp (E1). Done when: the Phase E exit check passes.
 
+## Phase F: Reply context
+
+- [ ] Unquoted DM answers the last bot message (F4). Done when: `TestImplicitQuote` passes; then, live, a bare "yes" in a DM after Rin's question answers that question.
+
 ## Phase G: OpenRouter provider
 
 **Goal:** the bot can run on any OpenRouter model (DeepSeek V4.1 Flash first) while Claude stays available.
@@ -134,6 +138,7 @@ flowchart LR
 - [ ] Bigger window and argument sides (L7, L8). Done when: the golden case "summary keeps who holds which side" passes, the full golden set still passes with the new prompt rules, and live, after a long group argument Rin states each person's side correctly.
 - [ ] Older chat context on demand (L9). Done when: store tests cover the 72-hour retention (window kept, other chats excluded) and search, the golden case "looks up an older message with chat_history" passes, and live, Rin finds something said earlier the same day that has left the window.
 - [ ] Tags in scheduled messages (L10). Done when: router and memtools tests cover pinning, expanding and listing; the golden case "scheduled reminder keeps its tags" passes (it can't without the change); and live, a scheduled reminder tags people who then get notified.
+- [ ] "Open:" lines only for arguments (L14). Done when: `TestCuratorOpenLinesOnlyForArguments` passes; then, live, the next summary of a chat with an undecided plan states it without an "Open:" line.
 
 ## Phase M: Flood control
 

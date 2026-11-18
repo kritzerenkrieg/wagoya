@@ -506,6 +506,12 @@ func (b *bot) onMessage(e *events.Message) {
 	if err != nil {
 		log.Printf("history: %v", err)
 	}
+	if !isGroup && qName == "" && qText == "" && qImg == nil {
+		// F4: an unquoted DM right after Rin's message answers that message.
+		if q, ok := router.ImplicitQuote(history); ok {
+			prompt = router.WithQuote(d.Prompt, b.cfg.BotName, q, 4000)
+		}
+	}
 	if err := b.db.AddMessage(ctx, chatKey, line); err != nil {
 		log.Printf("store message: %v", err)
 	}

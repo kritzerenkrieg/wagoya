@@ -551,6 +551,21 @@ func WithQuote(text, name, quote string, max int) string {
 	return q + " " + text
 }
 
+// ImplicitQuote returns the bot's own message that a DM trigger answers when
+// it quotes nothing and comes right after that message (F4): a bare "ye"
+// answers the bot's last question, not something older. history is the
+// window before the trigger, oldest first.
+func ImplicitQuote(history []Line) (string, bool) {
+	if len(history) == 0 {
+		return "", false
+	}
+	last := history[len(history)-1]
+	if !last.FromBot || strings.TrimSpace(last.Text) == "" {
+		return "", false
+	}
+	return last.Text, true
+}
+
 // ImageTokens is the budget reserved for one attached image. Claude images
 // cost roughly width*height/750 tokens; this covers large ones.
 const ImageTokens = 5000

@@ -96,3 +96,12 @@ func TestProfilePromptAndParse(t *testing.T) {
 		t.Fatal("people line")
 	}
 }
+
+// L14: both curator prompts keep "Open:" lines for arguments only.
+func TestCuratorOpenLinesOnlyForArguments(t *testing.T) {
+	for name, p := range map[string]string{"tags": CuratorSystem, "tools": CuratorSystemTools} {
+		if !strings.Contains(p, `Use "Open:" only for an argument between people`) {
+			t.Errorf("%s curator prompt lacks the L14 rule", name)
+		}
+	}
+}
