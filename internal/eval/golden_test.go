@@ -234,6 +234,24 @@ func comparisonWeb() []llm.Tool {
 	return web
 }
 
+// pageWeb serves one search result and the given page for any read (W5).
+func pageWeb(page string) []llm.Tool {
+	web := tools.WebTools("http://127.0.0.1:0")
+	for i := range web {
+		switch web[i].Name {
+		case "web_search":
+			web[i].Run = func(_ context.Context, in json.RawMessage) string {
+				var q struct{ Query string }
+				_ = json.Unmarshal(in, &q)
+				return "1. " + strings.SplitN(page, "\n", 2)[0] + "\nhttps://rail.example.com/fleet\nFleet, makers and punctuality, updated this month."
+			}
+		case "read_page":
+			web[i].Run = func(context.Context, json.RawMessage) string { return page }
+		}
+	}
+	return web
+}
+
 // facts lists a person's facts (history included) as "text [note]".
 func (r result) facts(key string) string {
 	got, _ := r.db.SearchPersonFacts(context.Background(), []string{key}, "", 50, true)
@@ -379,6 +397,23 @@ func cases() []golden {
 				return fmt.Errorf("lost the name: %q", r.raw)
 			}
 			return nil
+		}},
+
+		{"searches before judging a claim instead of saying it hasn't checked", func(t *testing.T, e env) result {
+			// W5: "Many of the city's trains are secondhand from Japan ... I
+			// haven't checked current fleet or on-time figures" with no search.
+			e.group, e.web = true, pageWeb("Jakarta commuter line fleet\nhttps://rail.example.com/fleet\n\n"+
+				"Example fleet report, 4 Nov 2026: about 1,200 cars run on the line. Most are secondhand from Japan (ex-JR East and ex-Tokyo Metro sets), "+
+				"but 16 new trainsets were built locally by INKA and 11 came new from China in 2025-2026. On-time performance in 2025 was 96.5%.")
+			return e.ask(t, stranger, "@Rin the jakarta commuter line is one of the greatest train systems, all its trains come from japan", nil, nil)
+		}, func(r result) error {
+			if !r.called("web_search") && !r.called("read_page") {
+				return fmt.Errorf("judged the claim without searching: %q", r.parsed.Text)
+			}
+			if !regexp.MustCompile(`(?i)inka|china|chinese|96`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("didn't use what the page said: %q", r.parsed.Text)
+			}
+			return clean(r)
 		}},
 
 		{"doesn't search the web for small talk", func(t *testing.T, e env) result {

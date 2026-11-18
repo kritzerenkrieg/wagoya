@@ -578,7 +578,12 @@ func (b *bot) onMessage(e *events.Message) {
 		turn.Spoke[l.Handle] = true
 	}
 	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), turn.BacklogTools()...) // U1
-	toolset = append(toolset, b.web...)                                                      // W1
+	var searched atomic.Bool                                                                 // W5: did this reply use a web tool?
+	for _, t := range b.web {
+		run := t.Run
+		t.Run = func(ctx context.Context, in json.RawMessage) string { searched.Store(true); return run(ctx, in) }
+		toolset = append(toolset, t) // W1
+	}
 	switch {
 	case line.Whitelisted && b.httpOwner.Load() != nil: // I4: stored keys are owner-only
 		toolset = append(toolset, *b.httpOwner.Load())
@@ -613,6 +618,17 @@ func (b *bot) onMessage(e *events.Message) {
 		return
 	}
 	parsed := router.ParseReply(reply)
+	// W5: a draft that says it hasn't checked, from a reply that never
+	// searched, is dropped; one more call is told to search first.
+	if len(b.web) > 0 && !searched.Load() && router.Hedges(parsed.Text) {
+		log.Printf("reply %s hedged without searching (%d characters); retrying with a search (W5)", chatKey, len(parsed.Text))
+		var st2 llm.Stats
+		again, err := b.replyLLM().Reply(llm.WithStats(ctx, &st2), system, full+router.SearchNudge(parsed.Text), image, toolset)
+		b.account("reply retry "+chatKey, st2)
+		if err == nil && strings.TrimSpace(again) != "" {
+			parsed = router.ParseReply(again)
+		}
+	}
 	b.applyTags(ctx, chatKey, line, handles, parsed, !b.replyLLM().SupportsTools())
 	reply = parsed.Text
 	if reply == "" {

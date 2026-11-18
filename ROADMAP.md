@@ -211,6 +211,7 @@ flowchart LR
 - [ ] 96k per call (W2). Done when: llm tests cover withholding results past the cap and `tool_choice` none; and live, no single call over 96k tokens shows in a day of `cost` lines.
 - [ ] Search instead of hedging (W3). Done when: the golden cases "searches the web for current figures instead of hedging" and "doesn't search the web for small talk" pass, and live, a question about current figures gets a sourced answer without being told to search.
 - [ ] Dig, then answer from the results (W4). Done when: the golden case "answers a comparison from the page it read instead of saying it found nothing" passes, and live, a model-comparison question gets figures from the pages it read.
+- [ ] Search chat claims, guard hedges (W5). Done when: `TestHedges` and `TestSearchNudge` pass, the golden case "searches before judging a claim instead of saying it hasn't checked" passes, and live, a day of `cost` lines shows web searches for factual claims and any "hedged without searching" retry is followed by a search.
 
 ## Cycle: feature and maintenance
 
