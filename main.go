@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
@@ -801,12 +802,46 @@ func (b *bot) applyTags(ctx context.Context, chatKey string, req router.Line, ha
 			log.Printf("persona change from non-whitelisted %s ignored", req.SenderID)
 			return
 		}
-		if err := b.db.SetPersona(ctx, r.Persona, req.SenderID); err != nil {
+		persona, err := fitPersona(r.Persona, func(system, prompt string) (string, error) {
+			var st llm.Stats
+			out, err := b.curatorLLM().Reply(llm.WithStats(ctx, &st), system, prompt, nil, nil)
+			b.account("persona", st)
+			return out, err
+		})
+		if err != nil { // D9: the old persona stays
+			log.Printf("persona from %s not saved: %v", req.SenderID, err)
+			return
+		}
+		if persona != r.Persona {
+			log.Printf("persona recompressed from %d to %d characters (D9)", utf8.RuneCountInString(r.Persona), utf8.RuneCountInString(persona))
+		}
+		if err := b.db.SetPersona(ctx, persona, req.SenderID); err != nil {
 			log.Printf("save persona: %v", err)
 			return
 		}
 		log.Printf("persona changed by %s", req.SenderID)
 	}
+}
+
+// fitPersona returns p within the D5 limit: as it is, or recompressed by ask
+// as a whole (D9), at most twice, each time aiming a little lower. A persona
+// that still doesn't fit is an error, so the old one stays: cutting it off
+// lost the rules at its end.
+func fitPersona(p string, ask func(system, prompt string) (string, error)) (string, error) {
+	for try := 1; try <= 2 && utf8.RuneCountInString(p) > router.MaxPersonaRunes; try++ {
+		out, err := ask(router.PersonaCompressSystem, router.PersonaCompressPrompt(p, router.MaxPersonaRunes-100*try))
+		if err != nil {
+			return "", fmt.Errorf("recompress: %w", err)
+		}
+		out = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(out), "<persona>"), "</persona>"))
+		if out != "" {
+			p = out
+		}
+	}
+	if n := utf8.RuneCountInString(p); n > router.MaxPersonaRunes {
+		return "", fmt.Errorf("still %d characters after recompressing (limit %d)", n, router.MaxPersonaRunes)
+	}
+	return p, nil
 }
 
 // send replies in chat, quoting e when given. Every outgoing message waits for

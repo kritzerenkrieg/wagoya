@@ -57,9 +57,10 @@ func TestParseReply(t *testing.T) {
 		t.Fatalf("persona: %v %q", r.PersonaSet, r.Persona)
 	}
 
+	// D9: an over-long persona is kept whole for recompression, never cut.
 	long := ParseReply("<persona>" + strings.Repeat("é", MaxPersonaRunes+50) + "</persona>")
-	if utf8.RuneCountInString(long.Persona) != MaxPersonaRunes {
-		t.Fatalf("persona not capped: %d runes", utf8.RuneCountInString(long.Persona))
+	if utf8.RuneCountInString(long.Persona) != MaxPersonaRunes+50 {
+		t.Fatalf("persona cut: %d runes", utf8.RuneCountInString(long.Persona))
 	}
 	named := ParseReply("ok\n<person name=\"Uncle  Jack\">Relation: John's friend.</person>\n<person id=\"Jack\">bad handle</person>\n<forget name=\"Jack\">x</forget>")
 	if named.Text != "ok" || len(named.PersonFacts) != 1 || named.PersonFacts[0] != (PersonFact{Name: "Uncle Jack", Text: "Relation: John's friend."}) {

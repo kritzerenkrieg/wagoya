@@ -55,6 +55,7 @@ flowchart LR
 - [x] People profiles keyed by LID/number with handles (D3, D4). Done when: tests cover handle assignment, fact add/forget, global lookup across chats, and tag injection from chat text.
 - [ ] Live check (D1-D4). Done when: the Phase D exit check passes.
 - [ ] Lively, no stock fillers (D8). Done when: the golden cases "doesn't open with a stock filler it keeps repeating" and "plays along with a joke instead of asking for a source" pass, and live, a day of group banter has no run of "Noted." replies.
+- [ ] Over-long persona recompressed (D9). Done when: `TestFitPersona` covers recompress, retry, reject and the short case, and live, a persona change that runs long logs "persona recompressed" with the end of the persona intact.
 
 ## Phase E: Web access
 

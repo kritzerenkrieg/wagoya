@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kritzerenkrieg/wagoya/internal/config"
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
+	"github.com/kritzerenkrieg/wagoya/internal/router"
 	"github.com/kritzerenkrieg/wagoya/internal/tools"
 )
 
@@ -74,5 +76,37 @@ func TestProviderCommand(t *testing.T) {
 	}
 	if !b.replyLLM().SupportsTools() || b.curatorLLM() == nil {
 		t.Fatal("clients not swapped")
+	}
+}
+
+// D9: an over-long persona is recompressed whole, retried lower once, and
+// rejected (old one kept) if it still doesn't fit; a short one is untouched.
+func TestFitPersona(t *testing.T) {
+	long := strings.Repeat("a", router.MaxPersonaRunes+10)
+	short := "You are Rin."
+	var limits []string
+	ask := func(outs ...string) func(string, string) (string, error) {
+		return func(system, prompt string) (string, error) {
+			limits = append(limits, strings.SplitN(prompt, "\n", 2)[0])
+			out := outs[0]
+			outs = outs[1:]
+			return out, nil
+		}
+	}
+	if got, err := fitPersona(short, ask()); err != nil || got != short {
+		t.Fatalf("short persona: %q %v", got, err)
+	}
+	if got, err := fitPersona(long, ask("<persona>"+short+"</persona>")); err != nil || got != short {
+		t.Fatalf("recompressed: %q %v", got, err)
+	}
+	limits = nil
+	if got, err := fitPersona(long, ask(long, short)); err != nil || got != short || len(limits) != 2 || !strings.Contains(limits[1], fmt.Sprint(router.MaxPersonaRunes-200)) {
+		t.Fatalf("second try: %q %v %v", got, err, limits)
+	}
+	if _, err := fitPersona(long, ask(long, long)); err == nil {
+		t.Fatal("still too long was accepted")
+	}
+	if _, err := fitPersona(long, func(string, string) (string, error) { return "", fmt.Errorf("down") }); err == nil {
+		t.Fatal("model error was accepted")
 	}
 }

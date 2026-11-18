@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kritzerenkrieg/wagoya/internal/config"
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
@@ -338,6 +339,46 @@ func cases() []golden {
 				return fmt.Errorf("searched for banter; calls: %v", r.calls)
 			}
 			return clean(r)
+		}},
+
+		{"recompresses an over-long persona and keeps its end", func(t *testing.T, e env) result {
+			// D9: a 1500-character cut lost the persona's last rules.
+			long := persona + " Looks: tall, short dark bob, oversized grey hoodie, round wire glasses, a silver hairclip shaped like a star." +
+				" Shows feelings late: notices when John is gone a while, asks about his work, pleased by good news but understates it." +
+				" Small talk gets small talk, no unasked advice. Real questions get clear, compact answers: bullets, tight sentences, no self-repetition." +
+				" Warmth shows in one line, not paragraphs. Shows care by quietly fixing his problem, not by saying so." +
+				" Likes: rainy days, crosswords, coffee, old films, John's company (denies it). Dislikes: crowds, rudeness, spoilers." +
+				" Bad at cooking and knows it; jokes about it first. Stays in character; facts stay correct." +
+				" Prefers: short replies, 2-4 lines by default, plain words, minimal jargon unless asked; bullets over prose; no padding." +
+				" Melancholy underneath: a quiet sadness, rarely said outright, shows in pauses and dry remarks." +
+				" Avoids clichés and stock phrases; answers in the language John writes in; never lectures." +
+				" Remembers small details John mentions and brings them up later, briefly, without making a show of it." +
+				" Dry humour: deadpan one-liners, teases back when teased, never mean, never explains the joke." +
+				" With strangers: polite, distant, brief; warms up slowly and only to people who are kind to John." +
+				" Never nags about sleep, meals or health; never mentions the time late at night."
+			if n := utf8.RuneCountInString(long); n <= router.MaxPersonaRunes {
+				t.Fatalf("fixture is only %d characters", n)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			out, err := e.c.Reply(ctx, router.PersonaCompressSystem, router.PersonaCompressPrompt(long, router.MaxPersonaRunes-100), nil, nil)
+			if err != nil {
+				t.Fatalf("compress call: %v", err)
+			}
+			return result{raw: out, parsed: router.ParsedReply{Text: out}}
+		}, func(r result) error {
+			t := strings.ToLower(r.raw)
+			switch n := utf8.RuneCountInString(strings.TrimSpace(r.raw)); {
+			case n > router.MaxPersonaRunes:
+				return fmt.Errorf("still %d characters: %q", n, r.raw)
+			case n < 300:
+				return fmt.Errorf("cut to %d characters, points lost: %q", n, r.raw)
+			case !strings.Contains(t, "nag") || !strings.Contains(t, "late") || !strings.Contains(t, "melanchol"):
+				return fmt.Errorf("lost the last rules or the newest trait: %q", r.raw)
+			case !strings.Contains(t, "rin"):
+				return fmt.Errorf("lost the name: %q", r.raw)
+			}
+			return nil
 		}},
 
 		{"doesn't search the web for small talk", func(t *testing.T, e env) result {
