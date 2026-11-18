@@ -1,0 +1,26 @@
+[Unit]
+Description=open-websearch daemon: web search and page reading for wagoya (W1)
+Wants=network-online.target
+After=network-online.target
+Before=wagoya.service
+
+[Service]
+Type=simple
+# deploy.sh fills in the user and app dir placeholders and installs the
+# pinned package into ows/ under the app dir.
+User=@USER@
+WorkingDirectory=@APP@/ows
+ExecStart=@APP@/ows/node_modules/.bin/open-websearch serve --port 3210
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=DEFAULT_SEARCH_ENGINE=duckduckgo
+Environment=SEARCH_MODE=request
+Environment=USE_PROXY=false
+Restart=always
+RestartSec=10
+MemoryMax=300M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

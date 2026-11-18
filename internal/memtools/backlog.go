@@ -1,0 +1,414 @@
+package memtools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/kritzerenkrieg/wagoya/internal/llm"
+	"github.com/kritzerenkrieg/wagoya/internal/store"
+)
+
+// Backlog tools (U1): add_task, update_task, delete_task (U5) and list_tasks. Every call works
+// on the requester's own tasks only; another person's task looks the same
+// as one that doesn't exist.
+
+const (
+	maxTaskName   = 200
+	maxTaskDesc   = 2000
+	maxTaskList   = 30
+	taskTimeInput = "2006-01-02 15:04"
+)
+
+// BacklogTools returns the backlog tools for a reply. Without a requester
+// key (nobody to own the tasks) there are none.
+func (t *Turn) BacklogTools() []llm.Tool {
+	if t.reqKey() == "" {
+		return nil
+	}
+	return []llm.Tool{t.addTaskTool(), t.updateTaskTool(), t.deleteTaskTool(), t.listTasksTool()}
+}
+
+func (t *Turn) parseDue(s string) (time.Time, error) {
+	w, err := time.ParseInLocation(taskTimeInput, strings.TrimSpace(s), t.now().Location())
+	if err != nil {
+		return time.Time{}, errors.New(`due must look like "2006-01-02 15:04" (local time)`)
+	}
+	return w, nil
+}
+
+// taskCategory reads a category (U4): free text, made lowercase; "none"
+// gives "".
+func taskCategory(c string) (string, error) {
+	c = store.NormTodoCategory(c)
+	if c == store.TodoNoCategory {
+		c = ""
+	}
+	if utf8.RuneCountInString(c) > store.MaxTodoCategory {
+		return "", fmt.Errorf("category is too long (max %d characters)", store.MaxTodoCategory)
+	}
+	return c, nil
+}
+
+const categoryHint = "Optional category, free text like work or hobby. Reuse one the requester already has (list_tasks shows them); set one when the task clearly belongs to one, else leave it empty."
+
+func checkTaskText(name, desc string) error {
+	switch {
+	case utf8.RuneCountInString(name) > maxTaskName:
+		return fmt.Errorf("name is too long (max %d characters)", maxTaskName)
+	case utf8.RuneCountInString(desc) > maxTaskDesc:
+		return fmt.Errorf("description is too long (max %d characters)", maxTaskDesc)
+	}
+	return nil
+}
+
+func (t *Turn) addTaskTool() llm.Tool {
+	return llm.Tool{
+		Name: "add_task",
+		Description: "Add a task to the requester's own backlog (todo list): something they want to do, track or not forget. " +
+			"This is the only place tasks, todos, chores and backlog items go: never save them as facts or memories. " +
+			"Tasks are the requester's own; you can't add one for someone else. A task with a due time gets an automatic reminder (09:00 the day before, or an hour before if that has passed); don't also schedule_message one for it unless asked. Only say it is added if this returned added.",
+		Schema: map[string]any{"type": "object", "required": []string{"name"}, "properties": map[string]any{
+			"name":        map[string]any{"type": "string", "description": "Short task name, under 200 characters."},
+			"description": map[string]any{"type": "string", "description": "Optional details."},
+			"due":         map[string]any{"type": "string", "description": "Optional local due time, \"YYYY-MM-DD HH:MM\", like <now>."},
+			"status":      map[string]any{"type": "string", "enum": store.TodoStatuses, "description": "Default backlog; ongoing if they are working on it now, hold if paused."},
+			"category":    map[string]any{"type": "string", "description": categoryHint},
+		}},
+		Run: func(ctx context.Context, input json.RawMessage) string {
+			var in struct{ Name, Description, Due, Status, Category string }
+			if err := json.Unmarshal(input, &in); err != nil {
+				return "error: invalid input: " + err.Error()
+			}
+			in.Name, in.Description = strings.TrimSpace(in.Name), strings.TrimSpace(in.Description)
+			if in.Name == "" {
+				return "error: name is empty"
+			}
+			if err := checkTaskText(in.Name, in.Description); err != nil {
+				return errText(err)
+			}
+			st, err := parseStatus(in.Status, store.TodoBacklog)
+			if err != nil {
+				return errText(err)
+			}
+			cat, err := taskCategory(in.Category)
+			if err != nil {
+				return errText(err)
+			}
+			td := store.Todo{Owner: t.reqKey(), Name: in.Name, Description: in.Description, Status: st, Category: cat, Chat: t.Chat}
+			if in.Due != "" {
+				var err error
+				if td.Due, err = t.parseDue(in.Due); err != nil {
+					return errText(err)
+				}
+			}
+			id, err := t.DB.AddTodo(ctx, td)
+			if err != nil {
+				return "error: storage failed"
+			}
+			td.ID = id
+			log.Printf("add_task %d by %s", id, t.reqKey())
+			return "added: " + t.taskLine(td)
+		},
+	}
+}
+
+func (t *Turn) updateTaskTool() llm.Tool {
+	return llm.Tool{
+		Name: "update_task",
+		Description: "Change one of the requester's own tasks by its id from list_tasks: set its status (backlog, ongoing, hold, done) or category, rename it, change its description or due time. Status goes in status, never in the name. " +
+			"Only their own tasks: nobody can change another person's. Only say it changed if this returned updated.",
+		Schema: map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
+			"id":          map[string]any{"type": "integer", "description": "The task id (\"task 12 | ...\")."},
+			"status":      map[string]any{"type": "string", "enum": store.TodoStatuses},
+			"name":        map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string", "description": "Replaces the whole description."},
+			"category":    map[string]any{"type": "string", "description": "Free text like work or hobby, reusing one they have; \"none\" removes it."},
+			"due":         map[string]any{"type": "string", "description": "Local \"YYYY-MM-DD HH:MM\", or \"none\" to remove the due time."},
+		}},
+		Run: func(ctx context.Context, input json.RawMessage) string {
+			var in struct {
+				ID                                       int64
+				Status, Name, Description, Due, Category *string
+			}
+			if err := json.Unmarshal(input, &in); err != nil {
+				return "error: invalid input: " + err.Error()
+			}
+			var c store.TodoChange
+			if in.Status != nil {
+				st, err := parseStatus(*in.Status, "")
+				if err != nil || st == "" {
+					return "error: status must be one of " + strings.Join(store.TodoStatuses, ", ")
+				}
+				c.Status = &st
+			}
+			if in.Name != nil {
+				n := strings.TrimSpace(*in.Name)
+				if n == "" {
+					return "error: name is empty"
+				}
+				c.Name = &n
+			}
+			if in.Description != nil {
+				d := strings.TrimSpace(*in.Description)
+				c.Description = &d
+			}
+			if in.Category != nil {
+				cat, err := taskCategory(*in.Category)
+				if err != nil {
+					return errText(err)
+				}
+				c.Category = &cat
+			}
+			if err := checkTaskText(deref(c.Name), deref(c.Description)); err != nil {
+				return errText(err)
+			}
+			if in.Due != nil {
+				if d := strings.TrimSpace(*in.Due); d == "" || strings.EqualFold(d, "none") {
+					c.ClearDue = true
+				} else {
+					w, err := t.parseDue(d)
+					if err != nil {
+						return errText(err)
+					}
+					c.Due = &w
+				}
+			}
+			td, err := t.DB.UpdateTodo(ctx, t.reqKey(), in.ID, c)
+			if errors.Is(err, store.ErrNotYourTodo) {
+				return "error: the requester has no task with that id; list_tasks shows their tasks"
+			}
+			if err != nil {
+				return "error: storage failed"
+			}
+			log.Printf("update_task %d by %s", in.ID, t.reqKey())
+			return "updated: " + t.taskLine(td)
+		},
+	}
+}
+
+func (t *Turn) deleteTaskTool() llm.Tool {
+	return llm.Tool{
+		Name: "delete_task",
+		Description: "Remove one of the requester's own tasks for good, by its id from list_tasks (U5). Use it only when they ask to delete or remove a task, never to finish one: a finished task is update_task with status done. " +
+			"Only their own tasks: nobody can delete another person's. Only say it is removed if this returned deleted.",
+		Schema: map[string]any{"type": "object", "required": []string{"id"}, "properties": map[string]any{
+			"id": map[string]any{"type": "integer", "description": "The task id (\"task 12 | ...\")."},
+		}},
+		Run: func(ctx context.Context, input json.RawMessage) string {
+			var in struct{ ID int64 }
+			if err := json.Unmarshal(input, &in); err != nil {
+				return "error: invalid input: " + err.Error()
+			}
+			td, err := t.DB.DeleteTodo(ctx, t.reqKey(), in.ID)
+			if errors.Is(err, store.ErrNotYourTodo) {
+				return "error: the requester has no task with that id; list_tasks shows their tasks"
+			}
+			if err != nil {
+				return "error: storage failed"
+			}
+			log.Printf("delete_task %d by %s", in.ID, t.reqKey())
+			return "deleted: " + t.taskLine(td)
+		},
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func (t *Turn) listTasksTool() llm.Tool {
+	return llm.Tool{
+		Name: "list_tasks",
+		Description: "List or search the requester's own tasks (their backlog, todo list). Always call this before answering anything about their tasks; never answer from memory or the transcript. " +
+			"It returns one line per task with all its details, then the list ready for the reply (U6): when you show them their tasks, send that list exactly as written, without changing its layout, order, ids or dates; you may add a short line before or after it. " +
+			"It shows only the requester's tasks: you can't see anyone else's, so if someone asks about another person's tasks, say only that person can ask.",
+		Schema: map[string]any{"type": "object", "properties": map[string]any{
+			"status":   map[string]any{"type": "string", "enum": append([]string{store.TodoActive}, append(store.TodoStatuses, "all")...), "description": "Default active: every task that isn't done."},
+			"category": map[string]any{"type": "string", "description": "Optional: only this category (like work or hobby), or \"none\" for tasks without one."},
+			"query":    map[string]any{"type": "string", "description": "Optional words to find in the name or description."},
+		}},
+		Run: func(ctx context.Context, input json.RawMessage) string {
+			var in struct{ Status, Category, Query string }
+			if len(input) > 0 {
+				if err := json.Unmarshal(input, &in); err != nil {
+					return "error: invalid input: " + err.Error()
+				}
+			}
+			status := strings.ToLower(strings.TrimSpace(in.Status))
+			switch status {
+			case "", store.TodoActive, "open":
+				status = store.TodoActive
+			case "all":
+				status = ""
+			default:
+				if !store.ValidTodoStatus(status) {
+					return "error: status must be active, all or one of " + strings.Join(store.TodoStatuses, ", ")
+				}
+			}
+			got, err := t.DB.ListTodos(ctx, t.reqKey(), status, in.Category, in.Query, maxTaskList+1)
+			if err != nil {
+				return "error: storage failed"
+			}
+			var b strings.Builder
+			if len(got) == 0 {
+				b.WriteString("no tasks\n")
+			}
+			for i, td := range got {
+				if i == maxTaskList {
+					b.WriteString("(more: narrow it with query)\n")
+					break
+				}
+				b.WriteString(t.taskLine(td) + "\n")
+			}
+			if len(got) > 0 {
+				b.WriteString("list for the reply (send as written):\n" + t.taskList(got[:min(len(got), maxTaskList)]) + "\n")
+			}
+			if cats, err := t.DB.TodoCategories(ctx, t.reqKey()); err == nil && len(cats) > 0 { // U4: reuse these
+				b.WriteString("their categories: " + strings.Join(cats, ", ") + "\n")
+			}
+			return strings.TrimSuffix(b.String(), "\n")
+		},
+	}
+}
+
+// parseStatus reads a status ("on hold" and "open" are accepted as hold
+// and backlog); empty gives def.
+func parseStatus(s, def string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "":
+		return def, nil
+	case "on hold", "paused":
+		return store.TodoHold, nil
+	case "open", "todo":
+		return store.TodoBacklog, nil
+	}
+	if !store.ValidTodoStatus(s) {
+		return "", errors.New("status must be one of " + strings.Join(store.TodoStatuses, ", "))
+	}
+	return s, nil
+}
+
+// taskLine renders a task for the model: "task 12 | ongoing | work | due
+// Tue 2026-11-12 18:00 (in 1d2h) | Name | description".
+func (t *Turn) taskLine(td store.Todo) string {
+	now := t.now()
+	due := "no due time"
+	if !td.Due.IsZero() {
+		d := td.Due.Sub(now)
+		when := "in " + shortDur(d)
+		if d < 0 {
+			when = shortDur(-d) + " overdue"
+			if td.Status == store.TodoDone {
+				when = "past"
+			}
+		}
+		due = fmt.Sprintf("due %s (%s)", td.Due.In(now.Location()).Format("Mon 2006-01-02 15:04"), when)
+		if td.Status != store.TodoDone { // U3
+			switch r := td.RemindAt(); {
+			case td.RemindedDue.Equal(td.Due):
+				due += ", reminder sent"
+			case !r.IsZero() && r.After(now):
+				due += ", reminder " + r.In(now.Location()).Format("Mon 15:04")
+			}
+		}
+	}
+	status := td.Status
+	if td.Status == store.TodoDone && !td.Done.IsZero() {
+		status = "done " + td.Done.In(now.Location()).Format("2006-01-02")
+	}
+	cat := td.Category
+	if cat == "" {
+		cat = "no category"
+	}
+	line := fmt.Sprintf("task %d | %s | %s | %s | %s", td.ID, status, cat, due, oneLineText(td.Name))
+	if d := oneLineText(td.Description); d != "" {
+		if utf8.RuneCountInString(d) > 300 {
+			d = string([]rune(d)[:300]) + "…"
+		}
+		line += " | " + d
+	}
+	return line
+}
+
+// taskList renders tasks the way they are shown to people (U6): a section
+// per status (ongoing, hold, backlog, done), within it a section per
+// category in the order they first appear (no category last, as "Other"),
+// and a line per task: "•  #12 Name: Fri 20 Nov 23:59". Ongoing and hold
+// tasks without a due time say "no due time"; backlog and done ones show
+// nothing. Plain text, no Markdown.
+func (t *Turn) taskList(tds []store.Todo) string {
+	now := t.now()
+	titles := map[string]string{store.TodoOngoing: "Ongoing", store.TodoHold: "Hold", store.TodoBacklog: "Backlog", store.TodoDone: "Done"}
+	var sections []string
+	for _, st := range store.TodoStatuses {
+		var cats []string
+		byCat := map[string][]string{}
+		for _, td := range tds {
+			if td.Status != st {
+				continue
+			}
+			line := fmt.Sprintf("•  #%d %s", td.ID, oneLineText(td.Name))
+			switch {
+			case !td.Due.IsZero():
+				d := td.Due.In(now.Location())
+				layout := "Mon 02 Jan 15:04"
+				if d.Year() != now.Year() {
+					layout = "Mon 02 Jan 2006 15:04"
+				}
+				line += ": " + d.Format(layout)
+				if st != store.TodoDone && d.Before(now) {
+					line += " (overdue)"
+				}
+			case st == store.TodoOngoing || st == store.TodoHold:
+				line += ": no due time"
+			}
+			if _, ok := byCat[td.Category]; !ok && td.Category != "" {
+				cats = append(cats, td.Category)
+			}
+			byCat[td.Category] = append(byCat[td.Category], line)
+		}
+		if len(byCat[""]) > 0 {
+			cats = append(cats, "")
+		}
+		if len(cats) == 0 {
+			continue
+		}
+		var groups []string
+		for _, c := range cats {
+			title := "Other"
+			if c != "" {
+				r, n := utf8.DecodeRuneInString(c)
+				title = strings.ToUpper(string(r)) + c[n:]
+			}
+			groups = append(groups, title+"\n"+strings.Join(byCat[c], "\n"))
+		}
+		sections = append(sections, titles[st]+"\n"+strings.Join(groups, "\n\n"))
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func oneLineText(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+func shortDur(d time.Duration) string {
+	d = d.Round(time.Minute)
+	days := int(d / (24 * time.Hour))
+	h := int(d % (24 * time.Hour) / time.Hour)
+	m := int(d % time.Hour / time.Minute)
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd%dh", days, h)
+	case h > 0:
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
+}
