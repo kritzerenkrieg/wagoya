@@ -139,7 +139,7 @@ func TestKinds(t *testing.T) {
 	s, now := openTest(t)
 	ctx := context.Background()
 	s.AddPersonFacts(ctx, "john", Source{Chat: "dm", Tier: TierSelf}, []string{"State: on the way home", "Alias: Kenny"})
-	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", Tier: TierInferred}, []string{"Alias: Wayan"})
+	s.AddPersonFacts(ctx, "mary", Source{Chat: "g", Tier: TierInferred}, []string{"Alias: Rendra"})
 	got, _ := s.SearchPersonFacts(ctx, []string{"john"}, "", 30, false)
 	if len(got) != 2 || !strings.Contains(strings.Join(texts(got), "|"), "on the way home [state since "+now.Local().Format("Mon 15:04")+"]") {
 		t.Fatalf("state: %v", texts(got))
@@ -152,7 +152,7 @@ func TestKinds(t *testing.T) {
 		t.Fatalf("expired state history: %+v", got)
 	}
 	if got, _ := s.SearchPersonFacts(ctx, []string{"mary"}, "", 30, false); len(got) != 1 || got[0].Kind != KindClaim ||
-		got[0].String() != "Alias: Wayan [claim, unverified]" {
+		got[0].String() != "Alias: Rendra [claim, unverified]" {
 		t.Fatalf("inferred alias: %v", texts(got))
 	}
 }

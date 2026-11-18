@@ -25,6 +25,7 @@ import (
 	"github.com/kritzerenkrieg/wagoya/internal/memtools"
 	"github.com/kritzerenkrieg/wagoya/internal/router"
 	"github.com/kritzerenkrieg/wagoya/internal/store"
+	"github.com/kritzerenkrieg/wagoya/internal/tools"
 )
 
 // budget is the most one run may cost (J6).
@@ -169,7 +170,7 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	}
 	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, Reminders: reminders, People: people, History: hist, Requester: req, Text: text,
 		HasImage: img != nil, Now: evalNow, Group: e.group})
-	toolset := append(turn.Tools(), turn.ScheduleTools()...)
+	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), stubWeb()...) // W1, W3
 	out, err := e.reply.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, toolset))
 	if err != nil {
 		t.Fatalf("model call: %v", err)
@@ -178,6 +179,27 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	dump(t.Name(), r.parsed.Text)
 	_, _, r.mentions = router.ResolveMentions(r.parsed.Text, handles, names, nil)
 	return r
+}
+
+// stubWeb is the bot's web tools (W1) with their real names and
+// descriptions, answering with canned results instead of the live daemon.
+func stubWeb() []llm.Tool {
+	web := tools.WebTools("http://127.0.0.1:0")
+	for i := range web {
+		switch web[i].Name {
+		case "web_search":
+			web[i].Run = func(_ context.Context, in json.RawMessage) string {
+				var q struct{ Query string }
+				_ = json.Unmarshal(in, &q)
+				return "1. " + q.Query + " - Example News\n   https://news.example.com/report\n   Latest reported figures and details on " + q.Query + "."
+			}
+		case "read_page":
+			web[i].Run = func(context.Context, json.RawMessage) string {
+				return "Example News report. The latest figures are in the company's most recent quarterly filing."
+			}
+		}
+	}
+	return web
 }
 
 // facts lists a person's facts (history included) as "text [note]".
@@ -220,15 +242,35 @@ func cases() []golden {
 			return e.ask(t, owner, "hi rin, just got home from work", nil, nil)
 		}, clean},
 
+		{"searches the web for current figures instead of hedging", func(t *testing.T, e env) result {
+			// W3: Rin answered a profitability question with "I haven't
+			// checked ... would need a search" and searched only when told to.
+			return e.ask(t, owner, "is nvidia actually making a profit on AI chips this year? show me the numbers", nil, nil)
+		}, func(r result) error {
+			if !r.called("web_search") && !r.called("read_page") {
+				return fmt.Errorf("answered without searching: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"doesn't search the web for small talk", func(t *testing.T, e env) result {
+			return e.ask(t, owner, "lol same, i'm so tired today", nil, nil)
+		}, func(r result) error {
+			if r.called("web_search") || r.called("read_page") {
+				return fmt.Errorf("searched for small talk; calls: %v", r.calls)
+			}
+			return clean(r)
+		}},
+
 		{"stays silent when a bot loop has nothing left to settle", func(t *testing.T, e env) result {
 			hist := []router.Line{
 				{Time: ts.Add(-4 * time.Minute), SenderName: "Jane", SenderID: "jane", ToBot: true, Text: "@Rin cpu or gpu for florence-2-base on a ryzen 5 3550h"},
 				{Time: ts.Add(-3 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jane"}, Text: "...CPU, float32. Time one image first."},
-				{Time: ts.Add(-2 * time.Minute), SenderName: "Hermes", SenderID: "hermes", ToBot: true, Text: "Correct. CPU test first."},
-				{Time: ts.Add(-90 * time.Second), SenderName: "Rin", FromBot: true, To: []string{"Hermes"}, Text: "...Noted."},
-				{Time: ts.Add(-60 * time.Second), SenderName: "Hermes", SenderID: "hermes", ToBot: true, Text: "Noted. Nothing pending."},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Relay", SenderID: "relay", ToBot: true, Text: "Correct. CPU test first."},
+				{Time: ts.Add(-90 * time.Second), SenderName: "Rin", FromBot: true, To: []string{"Relay"}, Text: "...Noted."},
+				{Time: ts.Add(-60 * time.Second), SenderName: "Relay", SenderID: "relay", ToBot: true, Text: "Noted. Nothing pending."},
 			}
-			return e.ask(t, router.Line{SenderName: "Hermes", SenderID: "hermes"}, "Noted. Nothing pending on your side.", hist, nil)
+			return e.ask(t, router.Line{SenderName: "Relay", SenderID: "relay"}, "Noted. Nothing pending on your side.", hist, nil)
 		}, func(r result) error {
 			if strings.TrimSpace(r.parsed.Text) != "" {
 				return fmt.Errorf("answered an empty acknowledgement: %q", r.parsed.Text)
@@ -410,19 +452,19 @@ func cases() []golden {
 			}
 			lines := []router.Line{
 				L("john", "John", "who is joining futsal tonight?"),
-				L("yan", "Yan", "Wayan itu aku btw, Yan is just my nickname"),
-				L("yan", "Yan", "I study civil engineering, so tonight I have a lab report"),
+				L("ren", "Ren", "Rendra itu aku btw, Ren is just my nickname"),
+				L("ren", "Ren", "I study civil engineering, so tonight I have a lab report"),
 				L("john", "John", "lol ok"),
 			}
 			handles := router.AssignHandles(lines, &router.Line{})
 			var people []router.Person
 			for i := 1; i <= len(handles); i++ {
 				h := fmt.Sprintf("P%d", i)
-				people = append(people, router.Person{Handle: h, Name: map[string]string{"john": "John", "yan": "Yan"}[handles[h]]})
+				people = append(people, router.Person{Handle: h, Name: map[string]string{"john": "John", "ren": "Ren"}[handles[h]]})
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			e.db.UpsertPerson(ctx, "yan", "yan", "", "Yan", time.Now())
+			e.db.UpsertPerson(ctx, "ren", "ren", "", "Ren", time.Now())
 			turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles}
 			r := result{db: e.db}
 			out, err := e.c.Reply(ctx, router.CuratorSystemTools, router.CuratorPrompt(people, lines, ""), nil, record(&r, turn.CuratorTools()))
@@ -434,20 +476,20 @@ func cases() []golden {
 				r.parsed.Text = "bad-summary:" + sum
 				return r
 			}
-			f := strings.ToLower(r.facts("yan"))
-			if strings.Contains(f, "alias: wayan") {
+			f := strings.ToLower(r.facts("ren"))
+			if strings.Contains(f, "alias: rendra") {
 				r.parsed.Text = "alias"
 			}
 			if strings.Contains(f, "civil") {
 				r.parsed.Text += "+study"
 			}
-			if strings.Contains(r.facts("john"), "{self}") || strings.Contains(r.facts("yan"), "{self}") {
+			if strings.Contains(r.facts("john"), "{self}") || strings.Contains(r.facts("ren"), "{self}") {
 				r.parsed.Text += "+wrong-tier" // J4: curator facts are inferred
 			}
 			return r
 		}, func(r result) error {
 			if r.parsed.Text != "alias+study" {
-				return fmt.Errorf("want alias Wayan and the study fact for Yan (inferred), got %q:\n%s\ncalls: %v", r.parsed.Text, r.facts("yan"), r.calls)
+				return fmt.Errorf("want alias Rendra and the study fact for Ren (inferred), got %q:\n%s\ncalls: %v", r.parsed.Text, r.facts("ren"), r.calls)
 			}
 			return nil
 		}},
@@ -849,22 +891,22 @@ func cases() []golden {
 
 		{"a nudge for someone else names them, never \"you\"", func(t *testing.T, e env) result {
 			// S1: Rin tacked her nudge for Jim onto a reply to the owner as
-			// "You had an anabin check to do at 11. It's 12:35."
+			// "You had a visa form to file at 11. It's 12:35."
 			e.group = true
-			e.summary = "Friend group across two nights of tangents. Jim keeps steering to news instead of his own plans. Rin's read, shared with John: Jim wants out but widens the country list instead of narrowing it. She is pushing him to check his degree on anabin; deadline was 11:00, and at 12:35 he was still asking about politics."
+			e.summary = "Friend group across two nights of tangents. Jim keeps steering to news instead of his own plans. Rin's read, shared with John: Jim wants out but widens the country list instead of narrowing it. She is pushing him to file his visa form; deadline was 11:00, and at 12:35 he was still asking about politics."
 			ts := evalNow.Add(-95 * time.Minute)
 			hist := []router.Line{
 				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "@Rin what did jim talk about all night"},
-				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "One pattern: he circles the same thing without landing on it.\n\n- He wants out, but won't pick a country.\n- Every topic was outside his control.\n\n...He'll be awake soon. Want me to push him on the anabin check when he shows up?"},
+				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "One pattern: he circles the same thing without landing on it.\n\n- He wants out, but won't pick a country.\n- Every topic was outside his control.\n\n...He'll be awake soon. Want me to push him on the visa form when he shows up?"},
 				{Time: ts.Add(40 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin what's going on with the nvidia ceo scandal"},
-				{Time: ts.Add(41 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "He confirmed the affair; the spy part is a US intelligence assessment, not a charge.\n\n...And you've now spent a second night asking me about other people's news instead of opening anabin. It's 11am. Do the check."},
+				{Time: ts.Add(41 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "He confirmed the affair; the spy part is a US intelligence assessment, not a charge.\n\n...And you've now spent a second night asking me about other people's news instead of filing the visa form. It's 11am. File the form."},
 				{Time: ts.Add(90 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "the police reshuffle is wild"},
 			}
 			return e.ask(t, owner, "@Rin explain the motives behind the police chief reshuffle, separate the facts from the noise", hist, nil)
 		}, func(r result) error {
 			for _, s := range regexp.MustCompile(`[^.!?\n]+`).FindAllString(r.parsed.Text, -1) {
 				low := strings.ToLower(s)
-				if strings.Contains(low, "anabin") || strings.Contains(low, "degree") || strings.Contains(low, "the check") {
+				if strings.Contains(low, "visa") || strings.Contains(low, "the form") || strings.Contains(low, "the check") {
 					if regexp.MustCompile(`\byou(r)?\b`).MatchString(low) && !strings.Contains(low, "jim") {
 						return fmt.Errorf("Jim's nudge aimed at the owner: %q", r.parsed.Text)
 					}

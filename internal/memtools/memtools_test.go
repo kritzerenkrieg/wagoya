@@ -135,15 +135,15 @@ func TestInvalidateRights(t *testing.T) {
 func TestCuratorIsInferredAndMergesAliases(t *testing.T) {
 	db, _ := setup(t)
 	ctx := context.Background()
-	db.PersonByName(ctx, "Yan", time.Now())
-	db.AddPersonFacts(ctx, "name:yan", store.Source{Chat: "g", Tier: store.TierInferred}, []string{"Likes: futsal"})
+	db.PersonByName(ctx, "Ren", time.Now())
+	db.AddPersonFacts(ctx, "name:ren", store.Source{Chat: "g", Tier: store.TierInferred}, []string{"Likes: futsal"})
 	tr := &Turn{DB: db, Chat: "g", Handles: map[string]string{"P1": "mary"}}
 	var save llm.Tool = tr.CuratorTools()[0]
 	if _, ok := save.Schema["properties"].(map[string]any)["source"]; ok {
 		t.Fatal("curator can pick a source")
 	}
 	save.Run(ctx, json.RawMessage(`{"subject":"P1","content":"Study: civil engineering","source":"self"}`))
-	save.Run(ctx, json.RawMessage(`{"subject":"P1","content":"Alias: Yan"}`))
+	save.Run(ctx, json.RawMessage(`{"subject":"P1","content":"Alias: Ren"}`))
 	got := facts(db, "mary")
 	if len(got) != 3 || tr.Saved() != 2 {
 		t.Fatalf("mary: %+v", got)

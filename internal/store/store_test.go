@@ -328,9 +328,9 @@ func TestAliasAndMerge(t *testing.T) {
 	}
 	defer s.Close()
 	now := time.Now()
-	s.UpsertPerson(ctx, "lidN", "lidN", "", "Yan", now)
-	s.AddPersonFacts(ctx, "lidN", Source{Chat: "g", Tier: TierSelf}, []string{"Alias: Wayan"})
-	if p, _ := s.FindPeople(ctx, "wayan", 5); len(p) != 1 || p[0].Key != "lidN" {
+	s.UpsertPerson(ctx, "lidN", "lidN", "", "Ren", now)
+	s.AddPersonFacts(ctx, "lidN", Source{Chat: "g", Tier: TierSelf}, []string{"Alias: Rendra"})
+	if p, _ := s.FindPeople(ctx, "rendra", 5); len(p) != 1 || p[0].Key != "lidN" {
 		t.Fatalf("alias lookup: %+v", p)
 	}
 	// A name-only profile created earlier merges into the real one.

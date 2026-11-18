@@ -207,6 +207,7 @@ flowchart LR
 
 - [ ] Own web tools (W1). Done when: tools tests cover search trimming, page offsets, bad URLs and daemon errors; the OpenRouter test shows no `openrouter:` server tools are sent; `WEBSEARCH_LIVE=http://127.0.0.1:3210 go test ./internal/tools -run Live` passes against the daemon; and live, after deploy `open-websearch.service` is running and "@Rin search the web: ..." makes Rin call `web_search`.
 - [ ] 96k per call (W2). Done when: llm tests cover withholding results past the cap and `tool_choice` none; and live, no single call over 96k tokens shows in a day of `cost` lines.
+- [ ] Search instead of hedging (W3). Done when: the golden cases "searches the web for current figures instead of hedging" and "doesn't search the web for small talk" pass, and live, a question about current figures gets a sourced answer without being told to search.
 
 ## Cycle: feature and maintenance
 

@@ -15,7 +15,7 @@ const CuratorSystem = `You maintain a knowledge base about the people in a Whats
 Read <messages> and record what is new about people, using exactly these forms, one per line:
 - <person id="P2">Label: short fact</person> for a participant shown with a handle.
 - <person name="Name">Label: short fact</person> for someone mentioned who has no handle.
-- <alias id="P2">Nickname</alias> when a participant is called by another name, or says a name is them ("Wayan itu aku").
+- <alias id="P2">Nickname</alias> when a participant is called by another name, or says a name is them ("Rendra itu aku").
 
 What to record: who people are and how they relate (job, studies, origin, family, friends, roles in the group), interests, likes and dislikes, habits, opinions they hold, plans, running jokes, what others say about them, and how they treat the assistant.
 Facts are compressed: a one-word label and under 12 words, e.g. "Likes: chess, war history" or "Relation: John's college friend". Write facts in English even when the chat is not. Times are clock times ("futsal match at 19:00"), never relative ("in an hour", "soon"): facts are read later, when a relative time is wrong.
@@ -30,7 +30,7 @@ Then write the updated <summary> of this chat: merge the old summary with the ne
 // save_fact instead of tags.
 const CuratorSystemTools = `You maintain a knowledge base about the people in a WhatsApp chat. You never reply to the chat; you only call save_fact.
 
-Read <messages> and save what is new about people, one save_fact call per fact. Subject is the handle (P2) for a participant, or a name for someone mentioned without a handle. When a participant is called by another name, or says a name is them ("Wayan itu aku"), save "Alias: Nickname" for them.
+Read <messages> and save what is new about people, one save_fact call per fact. Subject is the handle (P2) for a participant, or a name for someone mentioned without a handle. When a participant is called by another name, or says a name is them ("Rendra itu aku"), save "Alias: Nickname" for them.
 
 What to record: who people are and how they relate (job, studies, origin, family, friends, roles in the group), interests, likes and dislikes, lasting habits, opinions they hold, plans, and how they treat the assistant.
 Facts are compressed: a one-word label and under 12 words, e.g. "Likes: chess, war history" or "Relation: John's college friend". Write facts in English even when the chat is not. Times are clock times ("futsal match at 19:00"), never relative ("in an hour", "soon"): facts are read later, when a relative time is wrong. Use kind claim for what others say about someone, joke for running jokes, state for something that will pass within a day.

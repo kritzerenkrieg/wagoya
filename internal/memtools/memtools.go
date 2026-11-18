@@ -200,7 +200,7 @@ func errText(err error) string { return "error: " + err.Error() }
 func (t *Turn) saveFactTool() llm.Tool {
 	props := map[string]any{
 		"subject": map[string]any{"type": "string", "description": "Who the fact is about: a handle like P2, or a name (e.g. Jack, or Jack #9249 when search showed an ID tag) for someone not in this chat. A new name gets a new profile."},
-		"content": map[string]any{"type": "string", "description": "The fact, compressed: a one-word label and under 12 words, e.g. \"Job: nurse at Acme\", \"Likes: board games, jazz\", \"Alias: Yan\". In English."},
+		"content": map[string]any{"type": "string", "description": "The fact, compressed: a one-word label and under 12 words, e.g. \"Job: nurse at Acme\", \"Likes: board games, jazz\", \"Alias: Ren\". In English."},
 		"kind":    map[string]any{"type": "string", "enum": kinds, "description": "fact (default); state for something that passes within a day (on the way home, sick today); claim for something said about someone that you can't verify; joke for banter."},
 	}
 	desc := "Save a durable fact about a person to your global memory: who they are, job, studies, origin, relationships, likes, habits, things they asked you to remember. Skip what is already known, small talk and anything sensitive (passwords, phone numbers, addresses, health, money). Returns saved, or an error to fix."
