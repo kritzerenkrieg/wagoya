@@ -141,3 +141,7 @@ func WebText(active string, list []WebBackendInfo, raw, digest int, note string)
 	b.WriteString("\nUsage: !web openrouter")
 	return b.String()
 }
+
+// SearchingText is sent, quoting the request, when a reply starts its first
+// deep web search (W9); the answer follows as its own message.
+const SearchingText = "Searching..."

@@ -219,6 +219,7 @@ flowchart LR
 - [ ] One dig retry after a thin search (W6). Done when: `TestRetryNudge` passes, the golden case "digs for local prices instead of saying it didn't find any" passes, and live, the log shows `tool web_search` lines on the Anthropic provider and a price question gets a figure.
 - [ ] An estimate is an answer (W7). Done when: the golden cases "estimates a build when there are no official specs" and "converts dollar prices instead of withholding a rupiah total" pass, and live, an estimate request gets numbers instead of a refusal.
 - [ ] Deep web search, switchable backend (W8). Done when: `TestDeepSearchBuiltin`, `TestDeepSearchFallbacks`, `TestClampRawTokens`, `TestResearcher` and `TestWebCommand` pass; and live, `!web` lists both backends, a search logs a `research digest` line under the raw budget, and `!web openrouter` logs `research search digest`.
+- [ ] Say "Searching..." during a deep search (W9). Done when: live, a question that needs a search gets `Searching...` quoting it, then the answer quoting it too, and a chat question without a search gets no notice.
 
 ## Cycle: feature and maintenance
 

@@ -423,7 +423,7 @@ func (b *bot) quoted(ctx context.Context, m *waE2E.Message) (name, text string, 
 }
 
 func (b *bot) onMessage(e *events.Message) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), replyTimeout)
 	defer cancel()
 
 	chat := e.Info.Chat
@@ -604,9 +604,19 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), turn.BacklogTools()...) // U1
 	var webCalls atomic.Int32                                                                // W5, W6: web tool calls this reply made
+	var noticed atomic.Bool                                                                  // W9: "Searching..." sent
 	for _, t := range b.web {
-		run := t.Run
-		t.Run = func(ctx context.Context, in json.RawMessage) string { webCalls.Add(1); return run(ctx, in) }
+		run, name := t.Run, t.Name
+		t.Run = func(ctx context.Context, in json.RawMessage) string {
+			webCalls.Add(1)
+			if name == "web_search" && b.deepSearch() && noticed.CompareAndSwap(false, true) {
+				go func() { // W9: a deep search takes a while; say so, quoting the request
+					b.send(ctx, chat, router.SearchingText, e)
+					_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+				}()
+			}
+			return run(ctx, in)
+		}
 		toolset = append(toolset, t) // W1
 	}
 	switch {
@@ -1526,6 +1536,20 @@ func (b *bot) providerCommand(args []string) string {
 	b.models.Store(newModels(b.cfg, name, true))
 	log.Printf("provider switched: %s -> %s (L13)", active, name)
 	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, pc.Effort, b.cfg.Provider)
+}
+
+// replyTimeout is how long one incoming message may take, model calls,
+// deep searches (W8) and the W5/W6 retry included (W9).
+const replyTimeout = 6 * time.Minute
+
+// deepSearch reports whether web_search runs deep (W8), so it is slow
+// enough for the W9 notice.
+func (b *bot) deepSearch() bool {
+	if b.webTools == nil {
+		return false
+	}
+	_, digest := b.webTools.Limits()
+	return digest > 0
 }
 
 // webCommand runs !web (W8): with a backend's name it switches web_search to
