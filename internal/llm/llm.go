@@ -256,6 +256,7 @@ func (a *apiClient) Reply(ctx context.Context, system, prompt string, img *Image
 			} else {
 				texts, failed = append(texts, "unknown tool "+tu.Name), append(failed, true)
 			}
+			log.Printf("tool %s -> %s", tu.Name, firstLine(texts[len(texts)-1], 80)) // as OpenRouter logs them
 		}
 		prompt := int(resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens)
 		if overLimit(prompt, int(resp.Usage.OutputTokens), texts) { // W2

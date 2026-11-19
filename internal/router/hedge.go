@@ -26,3 +26,29 @@ func SearchNudge(draft string) string {
 	return fmt.Sprintf("\n\n<retry>Your first draft was %q. It says you haven't checked, and you didn't search. Don't send that. "+
 		"Call web_search now (read_page if the snippets lack the facts), then write the reply from what you found.</retry>", clean(draft))
 }
+
+// DigNudge is added when a reply searched a little but still says it
+// didn't find something (W6).
+func DigNudge(draft string) string {
+	return fmt.Sprintf("\n\n<retry>Your first draft was %q. It says you didn't find something after only a search or two. Don't send that. "+
+		"Search for exactly the missing thing with other words: in the chat's language and the topic's region too, and for local sources "+
+		"(shop listings for prices, official pages for rules and schedules). Open the best result with read_page, then write the reply from what you found.</retry>", clean(draft))
+}
+
+// MaxDigCalls is the web calls under which a hedging reply is sent back to
+// dig further (W6).
+const MaxDigCalls = 3
+
+// RetryNudge decides the one retry a reply may get (W5, W6): "" for none.
+// webCalls is how many web_search/read_page calls the draft made.
+func RetryNudge(draft string, webCalls int) string {
+	switch {
+	case !Hedges(draft):
+		return ""
+	case webCalls == 0:
+		return SearchNudge(draft)
+	case webCalls < MaxDigCalls:
+		return DigNudge(draft)
+	}
+	return ""
+}

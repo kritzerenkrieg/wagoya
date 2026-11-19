@@ -590,10 +590,10 @@ func (b *bot) onMessage(e *events.Message) {
 		turn.Spoke[l.Handle] = true
 	}
 	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), turn.BacklogTools()...) // U1
-	var searched atomic.Bool                                                                 // W5: did this reply use a web tool?
+	var webCalls atomic.Int32                                                                // W5, W6: web tool calls this reply made
 	for _, t := range b.web {
 		run := t.Run
-		t.Run = func(ctx context.Context, in json.RawMessage) string { searched.Store(true); return run(ctx, in) }
+		t.Run = func(ctx context.Context, in json.RawMessage) string { webCalls.Add(1); return run(ctx, in) }
 		toolset = append(toolset, t) // W1
 	}
 	switch {
@@ -630,13 +630,18 @@ func (b *bot) onMessage(e *events.Message) {
 		return
 	}
 	parsed := router.ParseReply(reply)
-	// W5: a draft that says it hasn't checked, from a reply that never
-	// searched, is dropped; one more call is told to search first.
-	if len(b.web) > 0 && !searched.Load() && router.Hedges(parsed.Text) {
-		log.Printf("reply %s hedged without searching (%d characters); retrying with a search (W5)", chatKey, len(parsed.Text))
+	// W5, W6: a draft that says it hasn't checked (no search) or didn't find
+	// something (a thin search) is dropped; one more call is told to search
+	// or dig first. At most one retry per reply.
+	if nudge := router.RetryNudge(parsed.Text, int(webCalls.Load())); len(b.web) > 0 && nudge != "" {
+		what := "reply retry "
+		if webCalls.Load() > 0 {
+			what = "reply dig retry "
+		}
+		log.Printf("%s%s: draft hedged after %d web calls (%d characters)", what, chatKey, webCalls.Load(), len(parsed.Text))
 		var st2 llm.Stats
-		again, err := b.replyLLM().Reply(llm.WithStats(ctx, &st2), system, full+router.SearchNudge(parsed.Text), image, toolset)
-		b.account("reply retry "+chatKey, st2)
+		again, err := b.replyLLM().Reply(llm.WithStats(ctx, &st2), system, full+nudge, image, toolset)
+		b.account(what+chatKey, st2)
 		if err == nil && strings.TrimSpace(again) != "" {
 			parsed = router.ParseReply(again)
 		}

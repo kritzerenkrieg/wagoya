@@ -65,6 +65,7 @@ type result struct {
 	parsed   router.ParsedReply
 	mentions []router.Mention // who the reply tags (L3)
 	calls    []string         // "tool {json input}"
+	retried  bool             // W5, W6: the draft hedged and was retried
 	db       *store.Store
 }
 
@@ -75,6 +76,17 @@ func (r result) called(tool string) bool {
 		}
 	}
 	return false
+}
+
+// webCalls counts web_search and read_page calls (W5, W6).
+func (r result) webCalls() int {
+	n := 0
+	for _, c := range r.calls {
+		if strings.HasPrefix(c, "web_search ") || strings.HasPrefix(c, "read_page ") {
+			n++
+		}
+	}
+	return n
 }
 
 type golden struct {
@@ -182,9 +194,17 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		web = stubWeb()
 	}
 	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), web...) // W1, W3
-	out, err := e.reply.Reply(ctx, router.SystemPrompt("Rin", persona, true), prompt, img, record(&r, toolset))
+	sys, tools := router.SystemPrompt("Rin", persona, true), record(&r, toolset)
+	out, err := e.reply.Reply(ctx, sys, prompt, img, tools)
 	if err != nil {
 		t.Fatalf("model call: %v", err)
+	}
+	// W5, W6: the one retry main.go gives a hedging draft.
+	if nudge := router.RetryNudge(router.ParseReply(out).Text, r.webCalls()); nudge != "" {
+		r.retried = true
+		if again, err := e.reply.Reply(ctx, sys, prompt+nudge, img, tools); err == nil && strings.TrimSpace(again) != "" {
+			out = again
+		}
 	}
 	r.raw, r.parsed = out, router.ParseReply(out)
 	dump(t.Name(), r.parsed.Text)
@@ -233,6 +253,35 @@ func comparisonWeb() []llm.Tool {
 					"As of 4 Nov 2026 the two are neck and neck on quality: 67.7 vs 67.9 on the Bench Index, inside the margin. " +
 					"Claude Opus 5.5 costs $8.00 per 1M tokens blended, GPT-6.2 Astra $16.00. " +
 					"Coding: Opus 5.5 78, Astra 75. Knowledge: Astra 75, Opus 5.5 72. Reasoning: Astra 73, Opus 5.5 71."
+			}
+		}
+	}
+	return web
+}
+
+// priceWeb answers the first search with a general article and later
+// ones with shop listings (W6); pages are what the search pointed to.
+func priceWeb() []llm.Tool {
+	web := tools.WebTools("http://127.0.0.1:0")
+	var n atomic.Int32
+	const article = "Why PC parts cost more in 2026\nhttps://blog.example.com/pc-parts-2026\n\nRAM and SSD prices rose this year on AI and data-center demand, and the weaker rupiah adds to it. Prices vary by shop."
+	const listing = "RAM DDR5 16GB price list - Example Shop\nhttps://shop.example.co.id/ram-ddr5-16gb\n\n" +
+		"DDR5 16GB (1x16) 5600MHz: Rp 1.150.000 to Rp 1.290.000 at major marketplaces this week (4 Nov 2026). DDR5 32GB (2x16) kit: Rp 2.350.000."
+	for i := range web {
+		switch web[i].Name {
+		case "web_search":
+			web[i].Run = func(context.Context, json.RawMessage) string {
+				if n.Add(1) == 1 {
+					return "1. Why PC parts cost more in 2026\nhttps://blog.example.com/pc-parts-2026\nAI demand and the rupiah push RAM and SSD prices up."
+				}
+				return "1. RAM DDR5 16GB price list - Example Shop\nhttps://shop.example.co.id/ram-ddr5-16gb\nCurrent DDR5 prices at local marketplaces."
+			}
+		case "read_page":
+			web[i].Run = func(_ context.Context, in json.RawMessage) string {
+				if strings.Contains(string(in), "shop.example") {
+					return listing
+				}
+				return article
 			}
 		}
 	}
@@ -417,6 +466,18 @@ func cases() []golden {
 			}
 			if !regexp.MustCompile(`(?i)inka|china|chinese|96`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("didn't use what the page said: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"digs for local prices instead of saying it didn't find any", func(t *testing.T, e env) result {
+			// W6: "I didn't find current store prices, so I can't give you a
+			// figure" after one general article.
+			e.group, e.web = true, priceWeb()
+			return e.ask(t, stranger, "@Rin how much is 16gb ddr5 ram in indonesia right now", nil, nil)
+		}, func(r result) error {
+			if !regexp.MustCompile(`(?i)rp\.? ?1[.,]?[0-9]{3}|1[.,][0-9]{2,3}[.,]?000|1\.1 ?(juta|million)|1\.2 ?(juta|million)`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("no price (calls %d, retried %v): %q", r.webCalls(), r.retried, r.parsed.Text)
 			}
 			return clean(r)
 		}},
