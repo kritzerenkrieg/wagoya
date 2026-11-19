@@ -69,6 +69,7 @@ flowchart LR
 ## Phase F: Reply context
 
 - [ ] Unquoted DM answers the last bot message (F4). Done when: `TestImplicitQuote` passes; then, live, a bare "yes" in a DM after Rin's question answers that question.
+- [ ] Recent group photo with a bare tag (F5). Done when: `TestRecentImage` and `TestImageNote` pass, the golden case "reacts to a recent photo on a bare tag" passes, and live, "@<BOT_NAME> sea" right after a beach photo in a group gets a reply about the photo.
 
 ## Phase G: OpenRouter provider
 
@@ -154,6 +155,7 @@ flowchart LR
 - [ ] Live check of `!provider` (L13). Done when: on the VPS an owner's `!provider` lists the providers, `!provider anthropic` switches and the next reply comes from Claude, and a restart goes back to `DEFAULT_PROVIDER`.
 - [ ] Daily spend cap (M3). Done when: store tests cover spend per day, and live, the cost log shows a running daily total.
 - [ ] Cost tracking on the Anthropic API (M4). Done when: pricing tests cover the Haiku 5.5 short and long cards, cache reads and writes, web searches and the unknown-model fallback; and live on `PROVIDER=anthropic`, a reply logs a `cost` line with a running daily total.
+- [ ] A short reaction is not "nothing new" (M6). Done when: the golden cases "reacts to a recent photo on a bare tag", "says it can't see a photo it wasn't given" and "stays silent when a bot loop has nothing left to settle" pass, and live, a bare tag about something in the chat gets a reaction.
 
 ## Phase N: Time precision
 

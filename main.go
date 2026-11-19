@@ -55,6 +55,9 @@ type bot struct {
 	denyCool *ratelimit.Cooldown // one denial per chat per DENY_COOLDOWN (B14)
 	flood    *ratelimit.Flood    // M1: messages per person per minute
 
+	imgMu     sync.Mutex
+	recentImg map[string]recentImage // F5: last photo per group chat, memory only
+
 	budgetMu    sync.Mutex
 	budgetNoted map[string]string // M3: chat -> day its over-budget notice went out
 
@@ -132,7 +135,7 @@ func main() {
 	}
 	b := &bot{cfg: cfg, db: db, curIdle: map[string]*time.Timer{}, wlLID: map[string]bool{},
 		pacer: ratelimit.NewPacer(cfg.SendInterval), denyCool: ratelimit.NewCooldown(cfg.DenyCooldown),
-		flood: ratelimit.NewFlood(floodLimit, floodWindow), budgetNoted: map[string]string{}}
+		flood: ratelimit.NewFlood(floodLimit, floodWindow), budgetNoted: map[string]string{}, recentImg: map[string]recentImage{}}
 	b.models.Store(newModels(cfg, cfg.Provider, true))
 	// W1: our own web tools, for everyone. Set up even when the default
 	// provider has no tool calls, since !provider can switch to one that does
@@ -489,6 +492,9 @@ func (b *bot) onMessage(e *events.Message) {
 		}
 	}
 
+	if isGroup && img != nil { // F5: a later bare tag may be about this photo
+		b.noteImage(chatKey, img, e.Info.PushName, e.Info.Timestamp)
+	}
 	if d.Action == router.Store {
 		if err := b.db.AddMessage(ctx, chatKey, line); err != nil {
 			log.Printf("store message: %v", err)
@@ -536,8 +542,14 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 
 	var image *llm.Image
+	imageNote := ""
 	if img == nil && qImg != nil && d.Action == router.Reply {
 		img = qImg // F1: "@Rin what's this" replying to an image
+	}
+	if isGroup && img == nil && qName == "" && qText == "" && d.Action == router.Reply {
+		if r, ok := b.lastImage(chatKey, e.Info.Timestamp); ok { // F5
+			img, imageNote = r.img, router.ImageNote(r.from, r.at, time.Now())
+		}
 	}
 	if img != nil {
 		data, err := b.wa.Download(ctx, img)
@@ -601,7 +613,7 @@ func (b *bot) onMessage(e *events.Message) {
 		toolBytes += len(t.Name) + len(t.Description) + len(j)
 	}
 	full := router.FitPromptWith(system, router.Prompt{
-		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, Now: time.Now(), Group: isGroup,
+		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, ImageNote: imageNote, Now: time.Now(), Group: isGroup,
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
 	rctx := ctx
 	if image == nil {
@@ -648,6 +660,40 @@ func (b *bot) onMessage(e *events.Message) {
 		log.Printf("store reply: %v", err)
 	}
 	b.noteMessage(chatKey)
+}
+
+// recentImageAge is how long a group photo stays attachable to a later tag
+// that quotes nothing (F5).
+const recentImageAge = 5 * time.Minute
+
+// recentImage is a group's last photo (F5): the message, to download on
+// demand, and who posted it when.
+type recentImage struct {
+	img  *waE2E.ImageMessage
+	from string
+	at   time.Time
+}
+
+func (b *bot) noteImage(chat string, img *waE2E.ImageMessage, from string, at time.Time) {
+	b.imgMu.Lock()
+	defer b.imgMu.Unlock()
+	for k, r := range b.recentImg { // drop stale ones so the map stays small
+		if at.Sub(r.at) > recentImageAge {
+			delete(b.recentImg, k)
+		}
+	}
+	b.recentImg[chat] = recentImage{img: img, from: from, at: at}
+}
+
+// lastImage is the chat's photo from the last recentImageAge before now (F5).
+func (b *bot) lastImage(chat string, now time.Time) (recentImage, bool) {
+	b.imgMu.Lock()
+	defer b.imgMu.Unlock()
+	r, ok := b.recentImg[chat]
+	if !ok || now.Sub(r.at) > recentImageAge || r.at.After(now) {
+		return recentImage{}, false
+	}
+	return r, true
 }
 
 // personKey is the profile key: the LID, or "pn:<number>" if no LID is known.

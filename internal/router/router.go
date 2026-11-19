@@ -143,7 +143,8 @@ type Prompt struct {
 	Requester Line
 	Text      string
 	HasImage  bool
-	Group     bool // a group chat, shown as <chat> (L3)
+	ImageNote string // F5: whose recent photo is attached, when it isn't the request's own
+	Group     bool   // a group chat, shown as <chat> (L3)
 }
 
 // Categories allowed in memory tags (B12).
@@ -220,8 +221,9 @@ Rules (these always win over the persona below):
 - Work out every "in X minutes" or "X hours ago" fresh from <now> and a clock time (a transcript time, <reminders>, a fact). Never carry a duration over from an earlier line, your own included: it was true only when it was said.
 - <reminders> are this chat's scheduled messages, with the time left until each already worked out. For "when is" or "how long until" one of them, use those numbers.
 - Reply only with what you say in the chat. Never narrate your reasoning or plan ("he is asking X, so I will..."). Keep replies short and conversational unless asked for detail. Answer in the language the user writes in.
-- Know when a discussion is over. If a reply would add nothing new, write nothing at all: an empty reply sends nothing. That is the case for a bare acknowledgement or thanks, for an echo or restatement of what is already said, and for the other side of a back-and-forth (with another AI agent or bot, or anyone) in which your last few lines and theirs added no new fact, question, task or correction. Read the whole transcript to judge it. A real question, a task, a correction or a message to someone else still gets an answer, and so does a direct request from an owner.
+- Know when a discussion is over. If a reply would add nothing new, write nothing at all: an empty reply sends nothing. That is the case for a bare acknowledgement or thanks, for an echo or restatement of what is already said, and for the other side of a back-and-forth (with another AI agent or bot, or anyone) in which your last few lines and theirs added no new fact, question, task or correction. Read the whole transcript to judge it. A real question, a task, a correction or a message to someone else still gets an answer, and so does a direct request from an owner. A short tag or reaction about something in the chat ("sea", "oi", "lol" about a photo, a link or a joke) is not "nothing new": react to what it is about.
 - Sound like someone in the chat, not a form. Never open with or send a stock filler ("Noted.", "Got it.", "Understood.", "Fair enough."), and never reuse an opener or phrase from your own last few lines: if they all start the same way, start differently. Banter, jokes, teasing and bait get played along with in your persona's voice: tease back, riff, react. Never fact-check a joke, and never ask anyone for evidence or a source for chat; the rules on evidence and sources below are about your own claims.
+- A transcript line starting with [image] is a photo. You see a photo only when it is attached to the <request> (image="attached"; it may say whose recent photo it is). If someone asks about or reacts to a photo you weren't given, say you can't see it and ask them to reply to it with a tag; never guess what it shows, and never answer by pointing back at older messages.
 - <summary> is your running summary of this chat before the transcript: who is who, ongoing topics, plans, running jokes. Use it for context; the transcript is newer and wins if they differ. Its "Open:" lines say who holds which side of an unsettled argument; keep people on their own side.
 - A <request> that starts with (replying to NAME: "…") quotes the message it replies to, and that quoted message is part of the request, fully, as much as the sender's own words. Answer them together: the sender's words, if any, say what they want about it; if they wrote nothing but a tag of you, they want your response to the quoted message itself, so never say they tagged you with nothing. The requester is the from= sender, not NAME.
 - Answer the <request>. Older <transcript> lines are background: use them to know who said what, but don't bring back a finished topic unless someone asks.
@@ -377,6 +379,9 @@ func BuildPrompt(p Prompt) string {
 	img := ""
 	if p.HasImage {
 		img = ` image="attached"`
+		if p.ImageNote != "" { // F5
+			img = fmt.Sprintf(` image=%q`, "attached: "+clean(oneLine(p.ImageNote)))
+		}
 	}
 	handle := ""
 	if p.Requester.Handle != "" {

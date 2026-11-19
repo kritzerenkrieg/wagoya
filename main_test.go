@@ -5,11 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kritzerenkrieg/wagoya/internal/config"
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
 	"github.com/kritzerenkrieg/wagoya/internal/router"
 	"github.com/kritzerenkrieg/wagoya/internal/tools"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
 // L1: !key saves, lists and removes keys, swaps the owner tool, and never
@@ -108,5 +110,26 @@ func TestFitPersona(t *testing.T) {
 	}
 	if _, err := fitPersona(long, func(string, string) (string, error) { return "", fmt.Errorf("down") }); err == nil {
 		t.Fatal("model error was accepted")
+	}
+}
+
+// F5: a group's last photo is attachable for five minutes, per chat.
+func TestRecentImage(t *testing.T) {
+	b := &bot{recentImg: map[string]recentImage{}}
+	t0 := time.Date(2026, 11, 5, 14, 0, 0, 0, time.UTC)
+	img := &waE2E.ImageMessage{}
+	b.noteImage("g1", img, "Jane", t0)
+	if r, ok := b.lastImage("g1", t0.Add(4*time.Minute)); !ok || r.img != img || r.from != "Jane" {
+		t.Fatalf("recent photo not found: %+v %v", r, ok)
+	}
+	if _, ok := b.lastImage("g2", t0.Add(time.Minute)); ok {
+		t.Fatal("photo leaked to another chat")
+	}
+	if _, ok := b.lastImage("g1", t0.Add(6*time.Minute)); ok {
+		t.Fatal("stale photo attached")
+	}
+	b.noteImage("g2", img, "Jim", t0.Add(10*time.Minute)) // prunes g1
+	if len(b.recentImg) != 1 {
+		t.Fatalf("stale photos kept: %d", len(b.recentImg))
 	}
 }

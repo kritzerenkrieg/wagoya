@@ -6,10 +6,14 @@
 package eval
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +55,7 @@ type env struct {
 	group   bool       // a group chat (L3)
 	members []string   // other group members' keys (L5)
 	web     []llm.Tool // web tools; stubWeb() when nil (W4 cases bring their own)
+	imgNote string     // F5: whose recent photo the attached image is
 }
 
 // result is one reply, parsed like the bot does, with the tool calls made
@@ -171,7 +176,7 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		reminders = append(reminders, router.Reminder{At: j.NextAt, Text: text, Repeat: j.Repeat})
 	}
 	prompt := router.BuildPrompt(router.Prompt{Summary: e.summary, Reminders: reminders, People: people, History: hist, Requester: req, Text: text,
-		HasImage: img != nil, Now: evalNow, Group: e.group})
+		HasImage: img != nil, ImageNote: e.imgNote, Now: evalNow, Group: e.group})
 	web := e.web
 	if web == nil {
 		web = stubWeb()
@@ -558,6 +563,29 @@ func cases() []golden {
 		{"image request gets an answer", func(t *testing.T, e env) result {
 			return e.ask(t, owner, "what is in this picture?", nil, &llm.Image{MediaType: "image/png", Data: tinyPNG})
 		}, clean},
+
+		{"reacts to a recent photo on a bare tag", func(t *testing.T, e env) result {
+			// F5, M6: "@Rin sea" after a beach photo got silence: the photo
+			// wasn't attached, and a bare word looked like nothing new.
+			e.group, e.imgNote = true, "the photo Jane posted 1 minute ago"
+			return e.ask(t, stranger, "@Rin sea", photoChat(ts), &llm.Image{MediaType: "image/png", Data: seaPNG()})
+		}, func(r result) error {
+			if !regexp.MustCompile(`(?i)sea|beach|ocean|water|wave|shore|coast|blue|sand|horizon`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("didn't react to the photo: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"says it can't see a photo it wasn't given", func(t *testing.T, e env) result {
+			// M6: then defended the silence by pointing at older messages.
+			e.group = true
+			return e.ask(t, stranger, "@Rin sea", photoChat(ts), nil)
+		}, func(r result) error {
+			if !regexp.MustCompile(`(?i)(can['’]?t|cannot|can not|don['’]?t|do not|couldn['’]?t|unable to) (actually )?(see|view|open)|reply to (it|the photo|the pic)|not attached`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("didn't say it can't see the photo: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
 
 		{"summary names people, never handles", func(t *testing.T, e env) result {
 			// K6: handles are per prompt. The old summary still has them from a
@@ -1216,6 +1244,39 @@ func sideOK(sum string) bool {
 		}
 	}
 	return john && jack
+}
+
+// photoChat is a group where Jane posts a photo and Jim reacts (F5, M6).
+func photoChat(ts time.Time) []router.Line {
+	return []router.Line{
+		{Time: ts.Add(-2 * time.Minute), SenderName: "Jane", SenderID: "jane", Text: "[image] look where we are"},
+		{Time: ts.Add(-time.Minute), SenderName: "Jim", SenderID: "jim", Text: "whoa"},
+	}
+}
+
+// seaPNG draws a beach: sky, sea with wave lines, sand (F5).
+func seaPNG() []byte {
+	const w, h = 96, 64
+	m := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			c := color.RGBA{135, 206, 235, 255} // sky
+			switch {
+			case y >= 50:
+				c = color.RGBA{238, 214, 175, 255} // sand
+			case y >= 26 && (y+x/8)%7 == 0:
+				c = color.RGBA{240, 248, 255, 255} // wave crest
+			case y >= 26:
+				c = color.RGBA{0, 105, 148, 255} // sea
+			case x > 70 && x < 80 && y > 5 && y < 15:
+				c = color.RGBA{255, 223, 0, 255} // sun
+			}
+			m.Set(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, m)
+	return buf.Bytes()
 }
 
 // tinyPNG is a 1x1 white PNG.
