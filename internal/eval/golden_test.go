@@ -587,6 +587,33 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"revise that rewrites the requester's own lines just before", func(t *testing.T, e env) result {
+			// F6: "@Rin revise that" right after the owner's own two lines
+			// rewrote an answer the bot gave half an hour earlier.
+			e.group = true
+			return e.ask(t, owner, "@Rin revise that so it doesn't sound so cringe", reviseChat(ts, false), nil)
+		}, func(r result) error {
+			t := strings.ToLower(r.parsed.Text)
+			if regexp.MustCompile(`brazil|coffee|tonnes|export`).MatchString(t) {
+				return fmt.Errorf("rewrote its own older answer: %q", r.parsed.Text)
+			}
+			if !regexp.MustCompile(`sav|money|wallet|spend|cheap|budget|cool|peace|broke|frugal`).MatchString(t) {
+				return fmt.Errorf("didn't rewrite the requester's lines: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"revise that right after a bot answer rewrites that answer", func(t *testing.T, e env) result {
+			// F6: when the bot's answer is the line right above, it is "that".
+			e.group = true
+			return e.ask(t, owner, "@Rin revise that, simpler", reviseChat(ts, true), nil)
+		}, func(r result) error {
+			if !regexp.MustCompile(`(?i)brazil|coffee|tonnes|export`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("didn't rewrite the answer right above: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"summary names people, never handles", func(t *testing.T, e env) result {
 			// K6: handles are per prompt. The old summary still has them from a
 			// pass where Jack was P2; in this pass Jim is P2 and Jack is P3.
@@ -1244,6 +1271,25 @@ func sideOK(sum string) bool {
 		}
 	}
 	return john && jack
+}
+
+// reviseChat is a group where the bot answered John half an hour ago and
+// John then wrote two lines of his own (F6); botLast moves the bot's answer
+// to right before the request instead.
+func reviseChat(ts time.Time, botLast bool) []router.Line {
+	answer := router.Line{Time: ts.Add(-30 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"},
+		Text: "Brazil exported about 2.7 million tonnes of coffee in 2025, roughly a third of world exports, with Vietnam second."}
+	own := []router.Line{
+		{Time: ts.Add(-3 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "you never buy snacks for the group anymore"},
+		{Time: ts.Add(-40 * time.Second), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "saving money is a lifestyle bro, my wallet has achieved inner peace"},
+		{Time: ts.Add(-20 * time.Second), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "i quit spending before it was cool"},
+	}
+	if botLast {
+		answer.Time = ts.Add(-20 * time.Second)
+		own[1].Time, own[2].Time = ts.Add(-5*time.Minute), ts.Add(-4*time.Minute)
+		return append(own, answer)
+	}
+	return append([]router.Line{answer}, own...)
 }
 
 // photoChat is a group where Jane posts a photo and Jim reacts (F5, M6).

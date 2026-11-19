@@ -70,6 +70,7 @@ flowchart LR
 
 - [ ] Unquoted DM answers the last bot message (F4). Done when: `TestImplicitQuote` passes; then, live, a bare "yes" in a DM after Rin's question answers that question.
 - [ ] Recent group photo with a bare tag (F5). Done when: `TestRecentImage` and `TestImageNote` pass, the golden case "reacts to a recent photo on a bare tag" passes, and live, "@<BOT_NAME> sea" right after a beach photo in a group gets a reply about the photo.
+- [ ] "That" in a group (F6). Done when: the golden cases "revise that rewrites the requester's own lines just before" and "revise that right after a bot answer rewrites that answer" pass, and live, "@<BOT_NAME> revise that" after your own message rewrites it.
 
 ## Phase G: OpenRouter provider
 
