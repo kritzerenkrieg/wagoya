@@ -171,6 +171,7 @@ flowchart LR
 **Exit:** the cost log shows cache hits and providers, and the daily cost per reply drops with the golden set still passing.
 
 - [ ] Cache-friendly harness (P1-P6). Done when: router, store and llm tests cover the order, stable handles, block window and provider pinning; the golden set passes; and live, a day of cost lines shows most reply prompt tokens cached, with the cost per reply compared to the 2026-11-06..08 baseline ($0.0030).
+- [ ] Prompt caching on the Anthropic API (P8). Done when: `TestAPICacheBreakpoints` passes, and live on Haiku, `cost reply` lines show cached tokens above 0 and multi-round replies cost less than before.
 
 ## Phase S: Addressing and attribution
 
@@ -216,6 +217,7 @@ flowchart LR
 - [ ] Dig, then answer from the results (W4). Done when: the golden case "answers a comparison from the page it read instead of saying it found nothing" passes, and live, a model-comparison question gets figures from the pages it read.
 - [ ] Search chat claims, guard hedges (W5). Done when: `TestHedges` and `TestSearchNudge` pass, the golden case "searches before judging a claim instead of saying it hasn't checked" passes, and live, a day of `cost` lines shows web searches for factual claims and any "hedged without searching" retry is followed by a search.
 - [ ] One dig retry after a thin search (W6). Done when: `TestRetryNudge` passes, the golden case "digs for local prices instead of saying it didn't find any" passes, and live, the log shows `tool web_search` lines on the Anthropic provider and a price question gets a figure.
+- [ ] An estimate is an answer (W7). Done when: the golden cases "estimates a build when there are no official specs" and "converts dollar prices instead of withholding a rupiah total" pass, and live, an estimate request gets numbers instead of a refusal.
 
 ## Cycle: feature and maintenance
 

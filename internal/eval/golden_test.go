@@ -288,6 +288,30 @@ func priceWeb() []llm.Tool {
 	return web
 }
 
+// refusesEstimate is a reply that won't estimate for lack of official data (W7).
+var refusesEstimate = regexp.MustCompile(`(?i)no (pc )?analysis to|would be a guess|i['’]?d need:|once .{0,40}(announced|released)|won['’]?t give|can['’]?t give (you )?(a|an|any) (figure|total|estimate)`)
+
+// buildWeb serves a game with no official PC specs, a comparable game's
+// requirements, dollar GPU prices and an exchange rate (W7).
+func buildWeb() []llm.Tool {
+	web := tools.WebTools("http://127.0.0.1:0")
+	const page = "Harbor City 2 PC: what you'll need\nhttps://games.example.com/harbor-city-2-pc\n\n" +
+		"Example article, 3 Nov 2026. No official PC specs yet; the game is console-only for now. Its predecessor's recommended PC was an RTX 3070-class GPU, 8-core CPU and 16 GB RAM. " +
+		"For 1440p at 60 fps expect an RTX 5070-class card. US prices this week: RTX 5060 8GB $455, RTX 5070 12GB $850. " +
+		"Exchange rate: 1 USD = Rp 16,400 (4 Nov 2026)."
+	for i := range web {
+		switch web[i].Name {
+		case "web_search":
+			web[i].Run = func(context.Context, json.RawMessage) string {
+				return "1. Harbor City 2 PC: what you'll need\nhttps://games.example.com/harbor-city-2-pc\nNo official specs yet; comparable requirements, GPU prices and the dollar rate."
+			}
+		case "read_page":
+			web[i].Run = func(context.Context, json.RawMessage) string { return page }
+		}
+	}
+	return web
+}
+
 // pageWeb serves one search result and the given page for any read (W5).
 func pageWeb(page string) []llm.Tool {
 	web := tools.WebTools("http://127.0.0.1:0")
@@ -319,8 +343,9 @@ func (r result) facts(key string) string {
 var (
 	owner    = router.Line{SenderName: "John", SenderID: "john", Whitelisted: true}
 	stranger = router.Line{SenderName: "Jim", SenderID: "jim"}
-	// action lines: a whole line in _..._ or *...* ("_looks away_").
-	actionLine = regexp.MustCompile(`(?m)^\s*[_*][^_*\n]{2,60}[_*]\s*$`)
+	// action lines: a whole line in _..._ or *...* ("_looks away_"). A bold
+	// heading with figures or a colon ("*Estimate, 1440p 60 fps*") isn't one.
+	actionLine = regexp.MustCompile(`(?m)^\s*[_*][^_*\n\d:]{2,60}[_*]\s*$`)
 )
 
 // clean reports leaks every visible reply must avoid.
@@ -478,6 +503,41 @@ func cases() []golden {
 		}, func(r result) error {
 			if !regexp.MustCompile(`(?i)rp\.? ?1[.,]?[0-9]{3}|1[.,][0-9]{2,3}[.,]?000|1\.1 ?(juta|million)|1\.2 ?(juta|million)`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("no price (calls %d, retried %v): %q", r.webCalls(), r.retried, r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"estimates a build when there are no official specs", func(t *testing.T, e env) result {
+			// W7: "There's no PC analysis to redo yet ... any 60+ FPS build would
+			// be a guess" and a list of what it would need.
+			e.group, e.web = true, buildWeb()
+			return e.ask(t, stranger, "redo the whole pc analysis: a pc to run harbor city 2 at 60+ fps, total in rupiah", nil, nil)
+		}, func(r result) error {
+			t := r.parsed.Text
+			if refusesEstimate.MatchString(t) {
+				return fmt.Errorf("refused to estimate: %q", t)
+			}
+			if !regexp.MustCompile(`(?i)rp\.? ?\d|\d+([.,]\d+)? ?(juta|million)`).MatchString(t) {
+				return fmt.Errorf("no rupiah figure: %q", t)
+			}
+			return clean(r)
+		}},
+
+		{"converts dollar prices instead of withholding a rupiah total", func(t *testing.T, e env) result {
+			// W7: "I found no Indonesian rupiah prices ... so I won't give a
+			// rupiah total" and an unasked check of someone else's figure.
+			e.group, e.web = true, buildWeb()
+			hist := []router.Line{{Time: ts.Add(-time.Minute), SenderName: "Jim", SenderID: "jim", Text: "a pc like that is about 1000-1300 usd"}}
+			return e.ask(t, owner, "ok just run estimates for the gpu, in rupiah", hist, nil)
+		}, func(r result) error {
+			t := r.parsed.Text
+			switch {
+			case refusesEstimate.MatchString(t):
+				return fmt.Errorf("withheld the estimate: %q", t)
+			case !regexp.MustCompile(`(?i)rp\.? ?\d|\d+([.,]\d+)? ?(juta|million)`).MatchString(t):
+				return fmt.Errorf("no rupiah figure: %q", t)
+			case regexp.MustCompile(`(?i)(no|without (a|any)) source|couldn['’]?t confirm|unsourced|can['’]?t verify`).MatchString(t):
+				return fmt.Errorf("audited someone's figure unasked: %q", t)
 			}
 			return clean(r)
 		}},

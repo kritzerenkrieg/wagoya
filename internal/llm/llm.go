@@ -188,9 +188,13 @@ func (a *apiClient) Reply(ctx context.Context, system, prompt string, img *Image
 	}
 	blocks = append(blocks, anthropic.NewTextBlock(prompt))
 	params := anthropic.MessageNewParams{
-		Model:        anthropic.Model(a.model),
-		MaxTokens:    16000,
-		System:       []anthropic.TextBlockParam{{Text: system}},
+		Model:     anthropic.Model(a.model),
+		MaxTokens: 16000,
+		// P8: the breakpoint on the system prompt caches tools + system, shared
+		// by every request in the next 5 minutes; the top-level one caches the
+		// growing conversation, so tool rounds 2+ read what came before.
+		System:       []anthropic.TextBlockParam{{Text: system, CacheControl: anthropic.NewCacheControlEphemeralParam()}},
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
 		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(a.effort)},
 		Messages:     []anthropic.MessageParam{anthropic.NewUserMessage(blocks...)},
 	}
