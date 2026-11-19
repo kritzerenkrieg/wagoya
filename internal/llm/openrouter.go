@@ -93,13 +93,15 @@ type orToolCall struct {
 }
 
 type orRequest struct {
-	Model      string         `json:"model"`
-	Messages   []orMessage    `json:"messages"`
-	Tools      []any          `json:"tools,omitempty"`
-	ToolChoice string         `json:"tool_choice,omitempty"`
-	MaxTokens  int            `json:"max_tokens"`
-	Reasoning  map[string]any `json:"reasoning,omitempty"`
-	Provider   map[string]any `json:"provider,omitempty"` // P2, P3
+	Model      string      `json:"model"`
+	Messages   []orMessage `json:"messages"`
+	Tools      []any       `json:"tools,omitempty"`
+	ToolChoice string      `json:"tool_choice,omitempty"`
+	MaxTokens  int         `json:"max_tokens"`
+	// MaxToolCalls caps OpenRouter's server tool calls in one request (W8).
+	MaxToolCalls int            `json:"max_tool_calls,omitempty"`
+	Reasoning    map[string]any `json:"reasoning,omitempty"`
+	Provider     map[string]any `json:"provider,omitempty"` // P2, P3
 	// G5: OpenAI-style effort for compatible APIs; "none" turns thinking off.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
@@ -130,6 +132,9 @@ type orResponse struct {
 		PromptTokensDetails struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
+		ServerToolUse struct {
+			WebSearchRequests int `json:"web_search_requests"`
+		} `json:"server_tool_use_details"`
 	} `json:"usage"`
 }
 

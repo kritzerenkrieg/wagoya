@@ -218,6 +218,7 @@ flowchart LR
 - [ ] Search chat claims, guard hedges (W5). Done when: `TestHedges` and `TestSearchNudge` pass, the golden case "searches before judging a claim instead of saying it hasn't checked" passes, and live, a day of `cost` lines shows web searches for factual claims and any "hedged without searching" retry is followed by a search.
 - [ ] One dig retry after a thin search (W6). Done when: `TestRetryNudge` passes, the golden case "digs for local prices instead of saying it didn't find any" passes, and live, the log shows `tool web_search` lines on the Anthropic provider and a price question gets a figure.
 - [ ] An estimate is an answer (W7). Done when: the golden cases "estimates a build when there are no official specs" and "converts dollar prices instead of withholding a rupiah total" pass, and live, an estimate request gets numbers instead of a refusal.
+- [ ] Deep web search, switchable backend (W8). Done when: `TestDeepSearchBuiltin`, `TestDeepSearchFallbacks`, `TestClampRawTokens`, `TestResearcher` and `TestWebCommand` pass; and live, `!web` lists both backends, a search logs a `research digest` line under the raw budget, and `!web openrouter` logs `research search digest`.
 
 ## Cycle: feature and maintenance
 

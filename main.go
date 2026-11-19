@@ -80,6 +80,7 @@ type bot struct {
 	keysPath    string
 	httpOwner   atomic.Pointer[llm.Tool]
 	web         []llm.Tool // W1: web_search and read_page, for everyone
+	webTools    *tools.Web // W8: their backend, switched by !web
 	newHTTPTool func(tools.Keys) llm.Tool
 }
 
@@ -141,8 +142,20 @@ func main() {
 	// provider has no tool calls, since !provider can switch to one that does
 	// (L13); promptBudget and the toolsets check SupportsTools per reply.
 	if cfg.WebTools && cfg.WebSearchURL != "" {
-		b.web = tools.WebTools(cfg.WebSearchURL)
-		log.Printf("web tools: web_search and read_page via %s", cfg.WebSearchURL)
+		var res tools.Researcher
+		if cfg.OpenRouterKey != "" && cfg.ResearchTokens > 0 {
+			res = llm.NewResearcher(cfg.OpenRouterKey, cfg.ResearchModel)
+		}
+		b.webTools = tools.NewWeb(tools.WebConfig{BaseURL: cfg.WebSearchURL, Researcher: res, Backend: cfg.WebBackend,
+			RawTokens: cfg.ResearchRaw, DigestTokens: cfg.ResearchTokens})
+		b.web = b.webTools.Tools()
+		raw, digest := b.webTools.Limits()
+		if digest > 0 {
+			log.Printf("web tools: web_search and read_page via %s; backend %s, deep search %dk raw to %dk digest with %s (W8)",
+				cfg.WebSearchURL, b.webTools.Backend(), raw/1000, digest/1000, cfg.ResearchModel)
+		} else {
+			log.Printf("web tools: web_search and read_page via %s; no deep search (no OpenRouter key or RESEARCH_TOKENS=0)", cfg.WebSearchURL)
+		}
 	}
 	if cfg.APITools {
 		hc := tools.NewHTTPClient()
@@ -1435,6 +1448,11 @@ func (b *bot) promptBudget(tools bool) int {
 	n := min(b.cfg.ContextTokens, llm.MaxCallTokens)
 	if tools && b.replyLLM().SupportsTools() {
 		n -= llm.ToolHeadroom
+		if b.webTools != nil { // W8: room for three digests
+			if _, digest := b.webTools.Limits(); 3*digest > llm.ToolHeadroom {
+				n -= 3*digest - llm.ToolHeadroom
+			}
+		}
 	}
 	return n
 }
@@ -1508,6 +1526,37 @@ func (b *bot) providerCommand(args []string) string {
 	b.models.Store(newModels(b.cfg, name, true))
 	log.Printf("provider switched: %s -> %s (L13)", active, name)
 	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, pc.Effort, b.cfg.Provider)
+}
+
+// webCommand runs !web (W8): with a backend's name it switches web_search to
+// it until the next restart; with none, or a wrong or unusable one, it lists
+// the backends and the active one.
+func (b *bot) webCommand(args []string) string {
+	if b.webTools == nil {
+		return "Web tools are off (WEB_TOOLS or WEBSEARCH_URL)."
+	}
+	active := b.webTools.Backend()
+	var list []router.WebBackendInfo
+	for _, name := range tools.Backends {
+		list = append(list, router.WebBackendInfo{Name: name, Ready: b.webTools.Ready(name)})
+	}
+	raw, digest := b.webTools.Limits()
+	show := func(note string) string { return router.WebText(active, list, raw, digest, note) }
+	if len(args) == 0 {
+		return show("")
+	}
+	name := strings.ToLower(args[0])
+	if len(args) > 1 || !slices.Contains(tools.Backends, name) {
+		return show(fmt.Sprintf("Unknown backend %q.", strings.Join(args, " ")))
+	}
+	if name == active {
+		return show("Already on " + name + ".")
+	}
+	if err := b.webTools.SetBackend(name); err != nil {
+		return show(name + ": " + err.Error() + ".")
+	}
+	log.Printf("web backend switched: %s -> %s (W8)", active, name)
+	return fmt.Sprintf("Web search now uses *%s*.\nIt goes back to %s (WEB_BACKEND) on restart.", name, b.cfg.WebBackend)
 }
 
 // ---- Knowledge curator (H1-H3) ----
@@ -1733,6 +1782,8 @@ func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command
 		b.send(ctx, chat, b.budgetText(ctx), e)
 	case "provider":
 		b.send(ctx, chat, b.providerCommand(cmd.Args), e)
+	case "web":
+		b.send(ctx, chat, b.webCommand(cmd.Args), e)
 	case "help":
 		b.send(ctx, chat, router.HelpText, e)
 	}

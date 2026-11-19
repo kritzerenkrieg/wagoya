@@ -11,11 +11,11 @@ import (
 // and never stored (L1, L2, M2, L12). Commands start with "!" (L12), so they
 // don't clash with other bots' "/" commands in the same group.
 type Command struct {
-	Name string   // "key", "reset", "mute", "unmute", "budget", "provider" or "help"
+	Name string   // "key", "reset", "mute", "unmute", "budget", "provider", "web" or "help"
 	Args []string // the words after the name
 }
 
-// ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider and !help as the
+// ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider, !web and !help as the
 // first word, after any leading @mentions ("@<BOT_NAME> !reset"). ok is false for
 // anything else, "/reset" included (L12).
 func ParseCommand(text string) (Command, bool) {
@@ -27,7 +27,7 @@ func ParseCommand(text string) (Command, bool) {
 		return Command{}, false
 	}
 	switch name := strings.ToLower(words[0]); name {
-	case "!key", "!reset", "!mute", "!unmute", "!budget", "!provider", "!help":
+	case "!key", "!reset", "!mute", "!unmute", "!budget", "!provider", "!web", "!help":
 		return Command{Name: name[1:], Args: words[1:]}, true
 	}
 	return Command{}, false
@@ -72,6 +72,7 @@ const HelpText = "Owner commands:\n" +
 	"- !help: this list\n" +
 	"- !budget: today's spend against the daily cap\n" +
 	"- !provider [name]: show the model provider, or switch it (until restart)\n" +
+	"- !web [builtin|openrouter]: show the web search backend, or switch it (until restart)\n" +
 	"- !reset: clear this chat's context (facts, memories and reminders are kept)\n" +
 	"- !mute @person [30m|2h|1d]: mute someone in every chat, until !unmute or for a while\n" +
 	"- !unmute @person: lift a mute or a flood timeout\n" +
@@ -105,5 +106,38 @@ func ProviderText(active string, list []ProviderInfo, note string) string {
 		}
 	}
 	b.WriteString("\nUsage: !provider anthropic")
+	return b.String()
+}
+
+// WebBackendInfo is one backend in the !web list (W8).
+type WebBackendInfo struct {
+	Name  string
+	Ready bool // its API key is set
+}
+
+// WebText is the !web reply for no argument or a wrong one (W8): the active
+// backend, every backend, the deep search limits and the usage.
+func WebText(active string, list []WebBackendInfo, raw, digest int, note string) string {
+	var b strings.Builder
+	if note != "" {
+		b.WriteString(note + "\n\n")
+	}
+	b.WriteString("Web search backend: *" + active + "*\n\nBackends:\n")
+	for _, w := range list {
+		state := "ready"
+		if !w.Ready {
+			state = "no api key set"
+		}
+		if w.Name == active {
+			state += " (active)"
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", w.Name, state)
+	}
+	if digest > 0 {
+		fmt.Fprintf(&b, "\nDeep search: up to %dk tokens of pages, digested to %dk.\n", raw/1000, digest/1000)
+	} else {
+		b.WriteString("\nDeep search: off (snippets only).\n")
+	}
+	b.WriteString("\nUsage: !web openrouter")
 	return b.String()
 }

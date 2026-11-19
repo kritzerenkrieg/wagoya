@@ -43,6 +43,10 @@ type Config struct {
 	SendInterval    time.Duration
 	WebTools        bool
 	WebSearchURL    string // W1: local open-websearch daemon; "" turns web off
+	WebBackend      string // W8: "builtin" or "openrouter" at startup
+	ResearchModel   string // W8: OpenRouter model that digests search results
+	ResearchRaw     int    // W8: raw tokens gathered per search (tools clamps it)
+	ResearchTokens  int    // W8: digest size per search; 0 = no deep search
 	APITools        bool   // I1: http_request + MCP tools for whitelisted requesters
 	MCPConfig       string // I3: path to mcp.json
 	EmbedModel      string // J2 c: OpenRouter embedding model for hybrid search; "" means off
@@ -165,6 +169,20 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("WEB_TOOLS must be true or false, got %q", v)
 	}
 	c.WebSearchURL = get("WEBSEARCH_URL", "http://127.0.0.1:3210")
+	switch c.WebBackend = strings.ToLower(get("WEB_BACKEND", "builtin")); c.WebBackend {
+	case "builtin", "openrouter":
+	default:
+		return nil, fmt.Errorf("WEB_BACKEND must be builtin or openrouter, got %q", c.WebBackend)
+	}
+	c.ResearchModel = get("RESEARCH_MODEL", "deepseek/deepseek-v4.1-flash-1017")
+	if c.ResearchRaw, err = getInt("RESEARCH_RAW_TOKENS", 64000); err != nil {
+		return nil, err
+	}
+	if v := strings.ToLower(get("RESEARCH_TOKENS", "")); v == "0" || v == "off" {
+		c.ResearchTokens = 0 // W8: no digest, W1 snippets
+	} else if c.ResearchTokens, err = getInt("RESEARCH_TOKENS", 8000); err != nil {
+		return nil, err
+	}
 	switch v := strings.ToLower(get("API_TOOLS", "true")); v {
 	case "true", "1", "yes", "on":
 		c.APITools = true

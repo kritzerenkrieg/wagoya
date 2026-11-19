@@ -15,7 +15,7 @@ flowchart LR
         LLM["llm: tool loop, max 8 rounds"]
         PARSE["router: parse reply<br/>hidden tags · mentions (L3)"]
         PACE["ratelimit: 3 s pacer (B18)"]
-        TOOLS["tools<br/>memory · schedule · backlog · profiles (J3)<br/>http_request · web search (W1) · MCP"]
+        TOOLS["tools<br/>memory · schedule · backlog · profiles (J3)<br/>http_request · web search (W1, deep digest W8) · MCP"]
         BG["background loops<br/>curator (H1) · scheduler 30 s (J7)<br/>embedder 10 min (J2) · backfill / audit"]
         BDB[("bot.db")]
         SDB[("session.db")]

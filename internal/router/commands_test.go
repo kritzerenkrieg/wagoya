@@ -102,3 +102,15 @@ func TestProviderText(t *testing.T) {
 		}
 	}
 }
+
+func TestWebCommand(t *testing.T) {
+	if c, ok := ParseCommand("@Bot !web openrouter"); !ok || c.Name != "web" || len(c.Args) != 1 {
+		t.Fatalf("parse: %+v %v", c, ok)
+	}
+	out := WebText("builtin", []WebBackendInfo{{"builtin", true}, {"openrouter", false}}, 64000, 8000, "openrouter: no api key set.")
+	for _, want := range []string{"openrouter: no api key set.", "*builtin*", "- builtin: ready (active)", "- openrouter: no api key set", "64k tokens of pages, digested to 8k"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in %s", want, out)
+		}
+	}
+}
