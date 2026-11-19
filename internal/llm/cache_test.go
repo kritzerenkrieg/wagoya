@@ -41,6 +41,11 @@ func TestAPICacheBreakpoints(t *testing.T) {
 	if cc, _ := sys[0].(map[string]any)["cache_control"].(map[string]any); cc["type"] != "ephemeral" {
 		t.Errorf("no cache_control on the system prompt: %v", sys[0])
 	}
+	// J6: the client reports what it spent, so the golden budget applies.
+	a.model = "claude-haiku-5-5"
+	if _, err := a.Reply(context.Background(), "s", "p", nil, nil); err != nil || a.Cost() <= 0 {
+		t.Errorf("cost not reported: %v %v", a.Cost(), err)
+	}
 	if st.CachedTokens != 900 || st.PromptTokens != 910 {
 		t.Errorf("stats: cached %d, prompt %d", st.CachedTokens, st.PromptTokens)
 	}

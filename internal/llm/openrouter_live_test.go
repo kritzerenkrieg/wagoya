@@ -27,7 +27,7 @@ func TestOpenRouterLive(t *testing.T) {
 		model = "deepseek/deepseek-v4.1-flash-1017"
 	}
 	c := NewOpenRouter(key, model, "low")
-	sys := router.SystemPrompt("Rin", "You are Rin, John's quiet kuudere assistant who cares more than she admits.", false)
+	sys := router.SystemPrompt("Bot", "You are Bot, John's quiet kuudere assistant who cares more than she admits.", false)
 	search := func(_ context.Context, person, query string, _ bool) string {
 		t.Logf("search_facts %q %q", person, query)
 		return "P1: Origin: Lisbon, Portugal; lives in Porto.\nP1: Job: Nurse."

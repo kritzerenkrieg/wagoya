@@ -85,7 +85,7 @@ func TestProviderCommand(t *testing.T) {
 // rejected (old one kept) if it still doesn't fit; a short one is untouched.
 func TestFitPersona(t *testing.T) {
 	long := strings.Repeat("a", router.MaxPersonaRunes+10)
-	short := "You are Rin."
+	short := "You are Bot."
 	var limits []string
 	ask := func(outs ...string) func(string, string) (string, error) {
 		return func(system, prompt string) (string, error) {

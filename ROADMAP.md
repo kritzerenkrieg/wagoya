@@ -48,7 +48,7 @@ flowchart LR
 ## Phase D: Persona and people
 
 **Goal:** the bot has its own persona that only whitelisted users can change, and remembers people by LID across chats.
-**Exit:** a whitelisted `!$ call yourself Rin and be sarcastic` changes the persona everywhere; the same request from a non-whitelisted member doesn't; a fact said about a person in one group is recalled about them in another chat.
+**Exit:** a whitelisted `!$ call yourself <BOT_NAME> and be sarcastic` changes the persona everywhere; the same request from a non-whitelisted member doesn't; a fact said about a person in one group is recalled about them in another chat.
 
 - [x] Persona table with history, injected into the system prompt (D1). Done when: a store test shows set/get/history persists across a restart.
 - [x] Persona updates honoured only for whitelisted requesters (D2). Done when: a router test parses the tag and main applies it only when the requester is whitelisted.
@@ -68,7 +68,7 @@ flowchart LR
 
 ## Phase F: Reply context
 
-- [ ] Unquoted DM answers the last bot message (F4). Done when: `TestImplicitQuote` passes; then, live, a bare "yes" in a DM after Rin's question answers that question.
+- [ ] Unquoted DM answers the last bot message (F4). Done when: `TestImplicitQuote` passes; then, live, a bare "yes" in a DM after the agent's question answers that question.
 - [ ] Recent group photo with a bare tag (F5). Done when: `TestRecentImage` and `TestImageNote` pass, the golden case "reacts to a recent photo on a bare tag" passes, and live, "@<BOT_NAME> sea" right after a beach photo in a group gets a reply about the photo.
 - [ ] "That" in a group (F6). Done when: the golden cases "revise that rewrites the requester's own lines just before" and "revise that right after a bot answer rewrites that answer" pass, and live, "@<BOT_NAME> revise that" after your own message rewrites it.
 
@@ -118,29 +118,29 @@ flowchart LR
 
 ## Phase K: Grounded replies
 
-**Goal:** Rin follows the standing preferences people set, and doesn't invent or defend claims about what was said.
-**Exit:** an owner's `Prefers:` fact shapes every reply without a search; told she said something she didn't, Rin checks the transcript and takes it back.
+**Goal:** the agent follows the standing preferences people set, and doesn't invent or defend claims about what was said.
+**Exit:** an owner's `Prefers:` fact shapes every reply without a search; told it said something it didn't, the agent checks the transcript and takes it back.
 
 - [x] Standing preferences in every prompt (K1). Done when: the requester's valid owner-tier `Prefers:`/`Rule:` facts (max 5) render under them in `<people>` in tool mode, and the golden case follows one (6/6 with it, 0/4 without).
 - [x] Grounding rule for claims about the past (K2). Done when: the system prompt has the rule, and the golden case "corrects a false claim" passes (measured 4-5/8 with the rule, 0/8 without).
 - [x] Current states in every prompt (K4). Done when: each person's newest 3 valid states render in `<people>` in tool mode (store and router tests), and the golden case "newer state from another chat beats a stale summary" passes (1/6 without, 5/6 with).
 - [ ] People are never merged (K5). Done when: router and store tests show such text is caught and never stored by any path; the golden cases "never treats two people as one" and "a nickname in a message is who it's for, not who said it" pass (both also passed without the prompt rule, so the code-level block is the guarantee); and live, no reply mixes up who said a line.
 
-- [ ] No handles in kept text (K6). Done when: router tests strip handles from summaries and map bare ones to names; the store scrubs old summaries; the golden case "summary names people, never handles" passes (0/4 kept handles with the rule, 7/8 without); and live, after a group pass, `chat_summary` has no `P#` and Rin keeps people apart in a long group argument.
-- [ ] Addressee labels and pronoun point of view (K7, K8). Done when: the router test renders `to="…"` only for known addressees (DM, reply, mention, Rin's own replies); the golden cases "echoes \"my PA\" from its own point of view" and "knows which person its own \"you\" was for" pass (both also passed without the labels, so they are guards); "keeps a nickname for itself on itself" passes (a guard: the real chat slipped 4/24 without the name sentence and 0/16 with, the invented replay 0/16 either way); and live, Rin never flips whose PA or whose debt a line states, or calls the owner by his nickname for her.
+- [ ] No handles in kept text (K6). Done when: router tests strip handles from summaries and map bare ones to names; the store scrubs old summaries; the golden case "summary names people, never handles" passes (0/4 kept handles with the rule, 7/8 without); and live, after a group pass, `chat_summary` has no `P#` and the agent keeps people apart in a long group argument.
+- [ ] Addressee labels and pronoun point of view (K7, K8). Done when: the router test renders `to="…"` only for known addressees (DM, reply, mention, the agent's own replies); the golden cases "echoes \"my PA\" from its own point of view" and "knows which person its own \"you\" was for" pass (both also passed without the labels, so they are guards); "keeps a nickname for itself on itself" passes (a guard: the real chat slipped 4/24 without the name sentence and 0/16 with, the invented replay 0/16 either way); and live, the agent never flips whose PA or whose debt a line states, or calls the owner by their nickname for it.
 
 ## Phase L: Owner commands
 
 **Goal:** owners can manage the bot from WhatsApp without SSH or the model in the loop.
 **Exit:** an owner's `/key` makes `http_request` use the key at once, and `/reset` gives a chat a fresh start, with neither message stored.
 
-- [ ] Owner commands `/key` and `/reset` (L1, L2). Done when: unit tests cover parsing, key save/list/remove without echoing the secret, and reset keeping facts and memories; then, live, `/key` in a DM lets Rin read the owner's task board and `/reset` empties the chat context.
-- [ ] Tagging people (L3). Done when: "@P2" in a reply becomes a WhatsApp mention and history stores "@Name" (router tests), the golden case "tags someone with a real mention" passes, and live, Rin tags someone in a group and they get notified.
+- [ ] Owner commands `/key` and `/reset` (L1, L2). Done when: unit tests cover parsing, key save/list/remove without echoing the secret, and reset keeping facts and memories; then, live, `/key` in a DM lets the agent read the owner's task board and `/reset` empties the chat context.
+- [ ] Tagging people (L3). Done when: "@P2" in a reply becomes a WhatsApp mention and history stores "@Name" (router tests), the golden case "tags someone with a real mention" passes, and live, the agent tags someone in a group and they get notified.
 - [ ] Cost log per reply (L4). Done when: the stats test passes, and live, `journalctl` shows a cost line for each reply.
-- [ ] Group member awareness (L5). Done when: the golden case "tags a group member who hasn't spoken" passes, and live, Rin tags a group member who hasn't spoken since `/reset`.
-- [ ] Reactions (L6). Done when: store tests cover set/change/remove/prune, the golden case "reads reactions on messages" passes, and live, a reaction on Rin's message shows up in her next reply's understanding.
-- [ ] Bigger window and argument sides (L7, L8). Done when: the golden case "summary keeps who holds which side" passes, the full golden set still passes with the new prompt rules, and live, after a long group argument Rin states each person's side correctly.
-- [ ] Older chat context on demand (L9). Done when: store tests cover the 72-hour retention (window kept, other chats excluded) and search, the golden case "looks up an older message with chat_history" passes, and live, Rin finds something said earlier the same day that has left the window.
+- [ ] Group member awareness (L5). Done when: the golden case "tags a group member who hasn't spoken" passes, and live, the agent tags a group member who hasn't spoken since `/reset`.
+- [ ] Reactions (L6). Done when: store tests cover set/change/remove/prune, the golden case "reads reactions on messages" passes, and live, a reaction on the agent's message shows up in its next reply's understanding.
+- [ ] Bigger window and argument sides (L7, L8). Done when: the golden case "summary keeps who holds which side" passes, the full golden set still passes with the new prompt rules, and live, after a long group argument the agent states each person's side correctly.
+- [ ] Older chat context on demand (L9). Done when: store tests cover the 72-hour retention (window kept, other chats excluded) and search, the golden case "looks up an older message with chat_history" passes, and live, the agent finds something said earlier the same day that has left the window.
 - [ ] Tags in scheduled messages (L10). Done when: router and memtools tests cover pinning, expanding and listing; the golden case "scheduled reminder keeps its tags" passes (it can't without the change); and live, a scheduled reminder tags people who then get notified.
 - [ ] "Open:" lines only for arguments (L14). Done when: `TestCuratorOpenLinesOnlyForArguments` passes; then, live, the next summary of a chat with an undecided plan states it without an "Open:" line.
 
@@ -150,7 +150,7 @@ flowchart LR
 **Exit:** a flood is cut off after about 10 messages in 2 minutes, with no model calls for the flooder after that, and spend never passes $2 a day for non-owners.
 
 - [ ] Flood timeout (M1). Done when: flood tracker tests cover trip, re-arm and window; the golden cases "flood check says SPAM for a flood" and "flood check says OK for fast chat" pass; and live, a burst of 10+ junk messages gets one notice and no more replies for 5 minutes.
-- [ ] `/mute` and `/unmute` (M2). Done when: command and store tests cover mute, timed mute, unmute and listing; and live, a muted member's @mentions get no reply and don't appear in Rin's transcript.
+- [ ] `/mute` and `/unmute` (M2). Done when: command and store tests cover mute, timed mute, unmute and listing; and live, a muted member's @mentions get no reply and don't appear in the agent's transcript.
 - [ ] `!` prefix, `!budget` and `!help` (L12). Done when: command tests cover the `!` prefix, `/reset` no longer parsing, `!budget` text and `!help` listing every command; and live, an owner's `!budget` and `!help` get replies and a non-owner's get none.
 - [x] `!provider` and per-provider model keys (L13, B9 digits only). Done when: config tests cover `DEFAULT_PROVIDER`, per-provider keys, ready providers and digit-only `WHITELIST`; command tests cover the list text; a bot test switches and refuses unknown or unset providers.
 - [ ] Live check of `!provider` (L13). Done when: on the VPS an owner's `!provider` lists the providers, `!provider anthropic` switches and the next reply comes from Claude, and a restart goes back to `DEFAULT_PROVIDER`.
@@ -160,10 +160,10 @@ flowchart LR
 
 ## Phase N: Time precision
 
-**Goal:** Rin's "in X minutes" matches the clock.
+**Goal:** the agent's "in X minutes" matches the clock.
 **Exit:** times to reminders come from the server, and no fact stores a relative time.
 
-- [ ] Clock times in facts, fresh durations, reminders in the prompt (N1, N2, N3). Done when: the router test renders `<reminders>` with the right time left; the golden cases "counts time to a reminder from now, not an old estimate" and "curator saves clock times, not relative ones" pass (both also passed without the change, so they guard against regressions rather than prove it); and live, Rin gives the right time to a reminder after an earlier wrong estimate is in the transcript.
+- [ ] Clock times in facts, fresh durations, reminders in the prompt (N1, N2, N3). Done when: the router test renders `<reminders>` with the right time left; the golden cases "counts time to a reminder from now, not an old estimate" and "curator saves clock times, not relative ones" pass (both also passed without the change, so they guard against regressions rather than prove it); and live, the agent gives the right time to a reminder after an earlier wrong estimate is in the transcript.
 
 ## Phase P: Harness cost
 
@@ -175,7 +175,7 @@ flowchart LR
 
 ## Phase S: Addressing and attribution
 
-**Goal:** Rin's lines reach the person they are meant for, and the summary keeps her suggestions apart from people's own commitments.
+**Goal:** the agent's lines reach the person they are meant for, and the summary keeps its suggestions apart from people's own commitments.
 **Exit:** no nudge for one member lands on another as "you".
 
 - [ ] Nudges aimed at the right person; agreed deadlines only (S1, S2). Done when: the golden case "a nudge for someone else names them, never "you"" passes with the rest of the golden set; and live, a day of group chat has no nudge addressed to the wrong person.
@@ -189,29 +189,29 @@ flowchart LR
 
 ## Phase U: Built-in backlog
 
-**Goal:** tasks live in one place, Rin's own backlog, and she always answers about them from it.
+**Goal:** tasks live in one place, the agent's own backlog, and it always answers about them from it.
 **Exit:** a week without a task kept as a fact or answered from memory.
 
 - [ ] Backlog table and tools (U1). Done when: store tests cover ownership and search; memtools tests show one person can't list or change another's task; the router test shows the counts; and live, "what are my tasks?" from the owner is answered with `list_tasks`, and another member asking for the owner's tasks is told only the owner can ask.
-- [ ] Task status and order (U2). Done when: store tests cover the order (due time, then ongoing, hold, backlog, done last) and the migration of "[Ongoing]" names; memtools tests cover setting and filtering by status; and live, after deploy the owner's "[Ongoing]" tasks show as ongoing without the tag, and Rin lists tasks soonest due first.
-- [ ] Reminder before a task is due (U3). Done when: store tests cover the reminder time (day before at 09:00, an hour before, none), once per due time, re-arming on a new due time and the column migration; the router test covers the fallback text; and live, a task due tomorrow gets a DM reminder at 09:00 in Rin's words.
+- [ ] Task status and order (U2). Done when: store tests cover the order (due time, then ongoing, hold, backlog, done last) and the migration of "[Ongoing]" names; memtools tests cover setting and filtering by status; and live, after deploy the owner's "[Ongoing]" tasks show as ongoing without the tag, and the agent lists tasks soonest due first.
+- [ ] Reminder before a task is due (U3). Done when: store tests cover the reminder time (day before at 09:00, an hour before, none), once per due time, re-arming on a new due time and the column migration; the router test covers the fallback text; and live, a task due tomorrow gets a DM reminder at 09:00 in the agent's words.
 - [ ] Task category (U4). Done when: store tests cover the column migration, lowercase storage, filtering by a category or none, and the categories in use; memtools tests cover setting, clearing and filtering, and that another person sees none of them; and live, "show my work tasks" lists only work tasks.
-- [ ] Deleting a task (U5). Done when: store and memtools tests show a task deleted by its owner is gone and nobody else can delete it; and live, "delete task 3" removes it and Rin confirms only after the tool says deleted.
+- [ ] Deleting a task (U5). Done when: store and memtools tests show a task deleted by its owner is gone and nobody else can delete it; and live, "delete task 3" removes it and the agent confirms only after the tool says deleted.
 - [ ] Task list layout (U6). Done when: a memtools test covers the layout (status, category, line format, no due time, other year, overdue); and live, "what are my tasks?" gets that layout with every id.
 
 ## Phase V: Person profiles
 
-**Goal:** Rin's understanding of a person grows with every chat, not just the recent transcript.
-**Exit:** a week in which Rin answers personal questions in line with who people are, and profiles change only with logged reasons.
+**Goal:** the agent's understanding of a person grows with every chat, not just the recent transcript.
+**Exit:** a week in which the agent answers personal questions in line with who people are, and profiles change only with logged reasons.
 
-- [ ] Profiles written by the curator, read by Rin (V1). Done when: store tests cover replacing, the backfill list and merging; memtools tests cover the reason requirement, the 400-word cap, handles removed, and reading by handle or name; router tests cover the curator prompt, the backfill parse and the `<people>` line; and live, after deploy the backfill writes profiles for people with 5+ facts, curator logs show profile rewrites with reasons (not every pass), and "what do you think of me?" makes Rin call `read_profile`.
+- [ ] Profiles written by the curator, read by the agent (V1). Done when: store tests cover replacing, the backfill list and merging; memtools tests cover the reason requirement, the 400-word cap, handles removed, and reading by handle or name; router tests cover the curator prompt, the backfill parse and the `<people>` line; and live, after deploy the backfill writes profiles for people with 5+ facts, curator logs show profile rewrites with reasons (not every pass), and "what do you think of me?" makes the agent call `read_profile`.
 
 ## Phase W: Own web tools and call size
 
 **Goal:** web answers stay cheap and no model call passes 96k tokens.
 **Exit:** a week of live use where web replies cost about as much as plain ones, and no `cost` line shows a prompt over 96k for a single call.
 
-- [ ] Own web tools (W1). Done when: tools tests cover search trimming, page offsets, bad URLs and daemon errors; the OpenRouter test shows no `openrouter:` server tools are sent; `WEBSEARCH_LIVE=http://127.0.0.1:3210 go test ./internal/tools -run Live` passes against the daemon; and live, after deploy `open-websearch.service` is running and "@Rin search the web: ..." makes Rin call `web_search`.
+- [ ] Own web tools (W1). Done when: tools tests cover search trimming, page offsets, bad URLs and daemon errors; the OpenRouter test shows no `openrouter:` server tools are sent; `WEBSEARCH_LIVE=http://127.0.0.1:3210 go test ./internal/tools -run Live` passes against the daemon; and live, after deploy `open-websearch.service` is running and "@<BOT_NAME> search the web: ..." makes the agent call `web_search`.
 - [ ] 96k per call (W2). Done when: llm tests cover withholding results past the cap and `tool_choice` none; and live, no single call over 96k tokens shows in a day of `cost` lines.
 - [ ] Search instead of hedging (W3). Done when: the golden cases "searches the web for current figures instead of hedging" and "doesn't search the web for small talk" pass, and live, a question about current figures gets a sourced answer without being told to search.
 - [ ] Dig, then answer from the results (W4). Done when: the golden case "answers a comparison from the page it read instead of saying it found nothing" passes, and live, a model-comparison question gets figures from the pages it read.

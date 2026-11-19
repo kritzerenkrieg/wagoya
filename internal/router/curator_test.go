@@ -62,8 +62,8 @@ func TestSummaryInPrompt(t *testing.T) {
 func TestStripHandles(t *testing.T) {
 	names := map[string]string{"P1": "John", "P2": "Jim"}
 	for _, c := range []struct{ in, want string }{
-		{"Chat is mostly John (P1) with Rin.", "Chat is mostly John with Rin."},
-		{"John (John, P1), Jack (P2, owner of a bot; listed as MOD), Mary (P3) and Rin.", "John (John), Jack (owner of a bot; listed as MOD), Mary and Rin."},
+		{"Chat is mostly John (P1) with Bot.", "Chat is mostly John with Bot."},
+		{"John (John, P1), Jack (P2, owner of a bot; listed as MOD), Mary (P3) and Bot.", "John (John), Jack (owner of a bot; listed as MOD), Mary and Bot."},
 		{"P2 said the match is at 19:00, @P1 agreed.", "Jim said the match is at 19:00, John agreed."},
 		{"P9 joined late.", "someone joined late."},
 		{"No handles here, P2P networking and MP3s.", "No handles here, P2P networking and MP3s."},

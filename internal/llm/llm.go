@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
@@ -132,6 +133,16 @@ type apiClient struct {
 	c      anthropic.Client
 	model  string
 	effort string
+
+	costMu sync.Mutex
+	cost   float64 // USD from the price card (M4), summed over all requests (J6)
+}
+
+// Cost is the total USD this client's requests cost, by the price card.
+func (a *apiClient) Cost() float64 {
+	a.costMu.Lock()
+	defer a.costMu.Unlock()
+	return a.cost
 }
 
 // NewAPI returns a Messages API client. It sends no server-side web tools:
@@ -221,10 +232,14 @@ func (a *apiClient) Reply(ctx context.Context, system, prompt string, img *Image
 		if round == 0 { // J5
 			reportPromptTokens(ctx, int(resp.Usage.InputTokens+resp.Usage.CacheCreationInputTokens+resp.Usage.CacheReadInputTokens))
 		}
+		u := resp.Usage
+		cost := AnthropicCost(a.model, Usage{Input: u.InputTokens, CacheWrite: u.CacheCreationInputTokens,
+			CacheRead: u.CacheReadInputTokens, Output: u.OutputTokens, WebSearches: u.ServerToolUse.WebSearchRequests})
+		a.costMu.Lock()
+		a.cost += cost
+		a.costMu.Unlock()
 		if st := statsFrom(ctx); st != nil { // L4, M4
-			u := resp.Usage
-			st.Cost += AnthropicCost(a.model, Usage{Input: u.InputTokens, CacheWrite: u.CacheCreationInputTokens,
-				CacheRead: u.CacheReadInputTokens, Output: u.OutputTokens, WebSearches: u.ServerToolUse.WebSearchRequests})
+			st.Cost += cost
 			st.Rounds++
 			st.PromptTokens += int(u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens)
 			st.OutputTokens += int(u.OutputTokens)

@@ -76,8 +76,8 @@ func TestPersonaHistory(t *testing.T) {
 	if p, _ := s.Persona(ctx); p != "" {
 		t.Fatalf("fresh persona = %q", p)
 	}
-	s.SetPersona(ctx, "You are Rin.", "lidA")
-	s.SetPersona(ctx, "You are Rin, sarcastic.", "lidA")
+	s.SetPersona(ctx, "You are Bot.", "lidA")
+	s.SetPersona(ctx, "You are Bot, sarcastic.", "lidA")
 	s.Close()
 
 	s, err = Open(path, 32) // restart
@@ -85,10 +85,10 @@ func TestPersonaHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if p, _ := s.Persona(ctx); p != "You are Rin, sarcastic." {
+	if p, _ := s.Persona(ctx); p != "You are Bot, sarcastic." {
 		t.Fatalf("persona = %q", p)
 	}
-	if h, _ := s.PersonaHistory(ctx, 10); len(h) != 2 || h[1] != "You are Rin." {
+	if h, _ := s.PersonaHistory(ctx, 10); len(h) != 2 || h[1] != "You are Bot." {
 		t.Fatalf("history = %v", h)
 	}
 }
@@ -477,7 +477,7 @@ func TestReactions(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	now := time.Now()
-	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "Rin", FromBot: true, Text: "futsal at 20:00?", ID: "m1"})
+	s.AddMessage(ctx, "g", router.Line{Time: now, SenderName: "Bot", FromBot: true, Text: "futsal at 20:00?", ID: "m1"})
 	set := func(id, who, emoji string) bool {
 		ok, err := s.SetReaction(ctx, "g", id, who, strings.ToUpper(who[:1])+who[1:], emoji, now)
 		if err != nil {

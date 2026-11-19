@@ -22,7 +22,7 @@ func TestSearchFactsLive(t *testing.T) {
 	if key == "" {
 		t.Skip("no ANTHROPIC_API_KEY")
 	}
-	facts := []string{"Name: Alex Smith, goes by John; Rin's owner.", "Origin: Lisbon, Portugal; lives in Porto.",
+	facts := []string{"Name: Alex Smith, goes by John; Bot's owner.", "Origin: Lisbon, Portugal; lives in Porto.",
 		"Job: Nurse, Acme Corp (since Dec 2025)."}
 	var calls []string
 	search := func(_ context.Context, person, query string, _ bool) string {
@@ -52,7 +52,7 @@ func TestSearchFactsLive(t *testing.T) {
 		Requester: req, Text: "where am i from and what do i do for work?"})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	out, err := NewAPI(key, model, "low").Reply(ctx, router.SystemPrompt("Rin", "You are Rin, terse kuudere assistant.", false), p, nil, []Tool{FactSearchTool(search)})
+	out, err := NewAPI(key, model, "low").Reply(ctx, router.SystemPrompt("Bot", "You are Bot, terse kuudere assistant.", false), p, nil, []Tool{FactSearchTool(search)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS backlog (
 	description TEXT NOT NULL DEFAULT '',
 	due_at INTEGER NOT NULL DEFAULT 0,  -- unix seconds, 0 for none
 	status TEXT NOT NULL DEFAULT 'backlog', -- backlog, ongoing, hold, done (U2)
-	source TEXT NOT NULL DEFAULT '',     -- where a task came from, if not Rin
+	source TEXT NOT NULL DEFAULT '',     -- where a task came from, if not the bot
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
 	done_at INTEGER NOT NULL DEFAULT 0,
@@ -298,7 +298,7 @@ func (s *Store) TodoCounts(ctx context.Context, owner string) (map[string]int, e
 }
 
 // TodoCategories is owner's categories in use, most used first (U4), so
-// Rin reuses them instead of making near-duplicates.
+// the bot reuses them instead of making near-duplicates.
 func (s *Store) TodoCategories(ctx context.Context, owner string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT category FROM backlog WHERE owner = ? AND category != ''
 		GROUP BY category ORDER BY count(*) DESC, category LIMIT 20`, owner)

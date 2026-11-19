@@ -7,7 +7,7 @@ import (
 
 // K5: every person is their own WhatsApp account. Nothing the bot keeps may
 // say two people are the same person, interchangeable, or one's alt, even as
-// a joke or a claim someone made: it made Rin answer one person as another.
+// a joke or a claim someone made: it made the bot answer one person as another.
 
 var identityMerge = regexp.MustCompile(`(?i)\bsame (person|guy|girl|account|human)\b|\binterchangeabl[ey]\b|\bone and the same\b|\balt(ernate)? (account|of)\b|\balter ego\b|\bsock ?puppet\b|\bsecond account\b`)
 

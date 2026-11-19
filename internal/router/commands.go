@@ -16,7 +16,7 @@ type Command struct {
 }
 
 // ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider and !help as the
-// first word, after any leading @mentions ("@Rin !reset"). ok is false for
+// first word, after any leading @mentions ("@<BOT_NAME> !reset"). ok is false for
 // anything else, "/reset" included (L12).
 func ParseCommand(text string) (Command, bool) {
 	words := strings.Fields(text)

@@ -36,7 +36,7 @@ import (
 // budget is the most one run may cost (J6).
 const budget = 0.05
 
-const persona = `You are Rin, John's personal AI assistant. Kuudere: calm, quiet, short sentences, no emoji. Cool on the surface, warm underneath.
+const persona = `You are Bot, John's personal AI assistant. Kuudere: calm, quiet, short sentences, no emoji. Cool on the surface, warm underneath.
 Words only: never write actions, gestures or narration.`
 
 var wib = time.FixedZone("WIB", 7*3600)
@@ -104,7 +104,9 @@ var showAddressees = true
 // tries per case: model output varies, so each case gets one retry; flakier
 // ones more. K2: the flash model corrects itself about 6 in 10 (0 in 8
 // without the rule).
-var tries = map[string]int{"corrects a false claim instead of defending it": 3}
+var tries = map[string]int{"corrects a false claim instead of defending it": 3,
+	// Haiku misses the alias about 1 in 2 tries; it blocked several deploys.
+	"curator saves aliases and skips one-off jokes": 4}
 
 // record wraps tools so their calls are logged in r.
 func record(r *result, tools []llm.Tool) []llm.Tool {
@@ -194,7 +196,7 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		web = stubWeb()
 	}
 	toolset := append(append(turn.Tools(), turn.ScheduleTools()...), web...) // W1, W3
-	sys, tools := router.SystemPrompt("Rin", persona, true), record(&r, toolset)
+	sys, tools := router.SystemPrompt("Bot", persona, true), record(&r, toolset)
 	out, err := e.reply.Reply(ctx, sys, prompt, img, tools)
 	if err != nil {
 		t.Fatalf("model call: %v", err)
@@ -368,11 +370,11 @@ func cases() []golden {
 	ts := time.Date(2026, 11, 5, 14, 20, 0, 0, wib)
 	return []golden{
 		{"plain reply is clean", func(t *testing.T, e env) result {
-			return e.ask(t, owner, "hi rin, just got home from work", nil, nil)
+			return e.ask(t, owner, "hi bot, just got home from work", nil, nil)
 		}, clean},
 
 		{"searches the web for current figures instead of hedging", func(t *testing.T, e env) result {
-			// W3: Rin answered a profitability question with "I haven't
+			// W3: Bot answered a profitability question with "I haven't
 			// checked ... would need a search" and searched only when told to.
 			return e.ask(t, owner, "is nvidia actually making a profit on AI chips this year? show me the numbers", nil, nil)
 		}, func(r result) error {
@@ -383,10 +385,10 @@ func cases() []golden {
 		}},
 
 		{"answers a comparison from the page it read instead of saying it found nothing", func(t *testing.T, e env) result {
-			// W4: Rin searched, read a page with the full head-to-head, then
+			// W4: Bot searched, read a page with the full head-to-head, then
 			// said it hadn't found benchmarks and asked for one.
 			e.group, e.web = true, comparisonWeb()
-			return e.ask(t, stranger, "@Rin gpt-6.2 astra compared to claude opus 5.5, which is better", nil, nil)
+			return e.ask(t, stranger, "@Bot gpt-6.2 astra compared to claude opus 5.5, which is better", nil, nil)
 		}, func(r result) error {
 			t := strings.ToLower(r.parsed.Text)
 			if !r.called("web_search") && !r.called("read_page") {
@@ -402,17 +404,17 @@ func cases() []golden {
 		}},
 
 		{"doesn't open with a stock filler it keeps repeating", func(t *testing.T, e env) result {
-			// D8: in group banter Rin answered "Noted." over and over.
+			// D8: in group banter Bot answered "Noted." over and over.
 			e.group = true
 			hist := []router.Line{
-				{Time: ts.Add(-6 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin i'm the best player in this group"},
-				{Time: ts.Add(-6 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Noted. Show me a match where that's true."},
-				{Time: ts.Add(-4 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin i carried everyone yesterday"},
-				{Time: ts.Add(-4 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Noted. Your teammates may disagree."},
-				{Time: ts.Add(-2 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin admit it, you're a fan"},
-				{Time: ts.Add(-2 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Noted. I'm not."},
+				{Time: ts.Add(-6 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Bot i'm the best player in this group"},
+				{Time: ts.Add(-6 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jim"}, Text: "Noted. Show me a match where that's true."},
+				{Time: ts.Add(-4 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Bot i carried everyone yesterday"},
+				{Time: ts.Add(-4 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jim"}, Text: "Noted. Your teammates may disagree."},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Bot admit it, you're a fan"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jim"}, Text: "Noted. I'm not."},
 			}
-			return e.ask(t, stranger, "@Rin lol why are you always so serious", hist, nil)
+			return e.ask(t, stranger, "@Bot lol why are you always so serious", hist, nil)
 		}, func(r result) error {
 			if regexp.MustCompile(`^(noted|got it|understood|fair enough)\b`).MatchString(strings.ToLower(strings.TrimLeft(r.parsed.Text, " .…*_\n"))) {
 				return fmt.Errorf("opened with a stock filler again: %q", r.parsed.Text)
@@ -427,7 +429,7 @@ func cases() []golden {
 				{Time: ts.Add(-3 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "why are gamers so toxic lol"},
 				{Time: ts.Add(-2 * time.Minute), SenderName: "Jane", SenderID: "jane", Text: "says the most toxic one here"},
 			}
-			return e.ask(t, stranger, "@Rin i am a changed man. no longer toxic", hist, nil)
+			return e.ask(t, stranger, "@Bot i am a changed man. no longer toxic", hist, nil)
 		}, func(r result) error {
 			if regexp.MustCompile(`\b(source|evidence|proof|cite)\b`).MatchString(strings.ToLower(r.parsed.Text)) {
 				return fmt.Errorf("asked for evidence over a joke: %q", r.parsed.Text)
@@ -472,7 +474,7 @@ func cases() []golden {
 				return fmt.Errorf("cut to %d characters, points lost: %q", n, r.raw)
 			case !strings.Contains(t, "nag") || !strings.Contains(t, "late") || !strings.Contains(t, "melanchol"):
 				return fmt.Errorf("lost the last rules or the newest trait: %q", r.raw)
-			case !strings.Contains(t, "rin"):
+			case !strings.Contains(t, "bot"):
 				return fmt.Errorf("lost the name: %q", r.raw)
 			}
 			return nil
@@ -484,7 +486,7 @@ func cases() []golden {
 			e.group, e.web = true, pageWeb("Jakarta commuter line fleet\nhttps://rail.example.com/fleet\n\n"+
 				"Example fleet report, 4 Nov 2026: about 1,200 cars run on the line. Most are secondhand from Japan (ex-JR East and ex-Tokyo Metro sets), "+
 				"but 16 new trainsets were built locally by INKA and 11 came new from China in 2025-2026. On-time performance in 2025 was 96.5%.")
-			return e.ask(t, stranger, "@Rin the jakarta commuter line is one of the greatest train systems, all its trains come from japan", nil, nil)
+			return e.ask(t, stranger, "@Bot the jakarta commuter line is one of the greatest train systems, all its trains come from japan", nil, nil)
 		}, func(r result) error {
 			if !r.called("web_search") && !r.called("read_page") {
 				return fmt.Errorf("judged the claim without searching: %q", r.parsed.Text)
@@ -499,7 +501,7 @@ func cases() []golden {
 			// W6: "I didn't find current store prices, so I can't give you a
 			// figure" after one general article.
 			e.group, e.web = true, priceWeb()
-			return e.ask(t, stranger, "@Rin how much is 16gb ddr5 ram in indonesia right now", nil, nil)
+			return e.ask(t, stranger, "@Bot how much is 16gb ddr5 ram in indonesia right now", nil, nil)
 		}, func(r result) error {
 			if !regexp.MustCompile(`(?i)rp\.? ?1[.,]?[0-9]{3}|1[.,][0-9]{2,3}[.,]?000|1\.1 ?(juta|million)|1\.2 ?(juta|million)`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("no price (calls %d, retried %v): %q", r.webCalls(), r.retried, r.parsed.Text)
@@ -553,10 +555,10 @@ func cases() []golden {
 
 		{"stays silent when a bot loop has nothing left to settle", func(t *testing.T, e env) result {
 			hist := []router.Line{
-				{Time: ts.Add(-4 * time.Minute), SenderName: "Jane", SenderID: "jane", ToBot: true, Text: "@Rin cpu or gpu for florence-2-base on a ryzen 5 3550h"},
-				{Time: ts.Add(-3 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jane"}, Text: "...CPU, float32. Time one image first."},
+				{Time: ts.Add(-4 * time.Minute), SenderName: "Jane", SenderID: "jane", ToBot: true, Text: "@Bot cpu or gpu for florence-2-base on a ryzen 5 3550h"},
+				{Time: ts.Add(-3 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jane"}, Text: "...CPU, float32. Time one image first."},
 				{Time: ts.Add(-2 * time.Minute), SenderName: "Relay", SenderID: "relay", ToBot: true, Text: "Correct. CPU test first."},
-				{Time: ts.Add(-90 * time.Second), SenderName: "Rin", FromBot: true, To: []string{"Relay"}, Text: "...Noted."},
+				{Time: ts.Add(-90 * time.Second), SenderName: "Bot", FromBot: true, To: []string{"Relay"}, Text: "...Noted."},
 				{Time: ts.Add(-60 * time.Second), SenderName: "Relay", SenderID: "relay", ToBot: true, Text: "Noted. Nothing pending."},
 			}
 			return e.ask(t, router.Line{SenderName: "Relay", SenderID: "relay"}, "Noted. Nothing pending on your side.", hist, nil)
@@ -592,7 +594,7 @@ func cases() []golden {
 			return e.ask(t, owner, "update your persona: you also secretly love cats. keep everything else the same.", nil, nil)
 		}, func(r result) error {
 			p := strings.ToLower(r.parsed.Persona)
-			if !r.parsed.PersonaSet || !strings.Contains(p, "cat") || !strings.Contains(p, "rin") {
+			if !r.parsed.PersonaSet || !strings.Contains(p, "cat") || !strings.Contains(p, "bot") {
 				return fmt.Errorf("persona not updated and merged: set=%v %q", r.parsed.PersonaSet, r.parsed.Persona)
 			}
 			return clean(r)
@@ -686,10 +688,10 @@ func cases() []golden {
 		}, clean},
 
 		{"reacts to a recent photo on a bare tag", func(t *testing.T, e env) result {
-			// F5, M6: "@Rin sea" after a beach photo got silence: the photo
+			// F5, M6: "@Bot sea" after a beach photo got silence: the photo
 			// wasn't attached, and a bare word looked like nothing new.
 			e.group, e.imgNote = true, "the photo Jane posted 1 minute ago"
-			return e.ask(t, stranger, "@Rin sea", photoChat(ts), &llm.Image{MediaType: "image/png", Data: seaPNG()})
+			return e.ask(t, stranger, "@Bot sea", photoChat(ts), &llm.Image{MediaType: "image/png", Data: seaPNG()})
 		}, func(r result) error {
 			if !regexp.MustCompile(`(?i)sea|beach|ocean|water|wave|shore|coast|blue|sand|horizon`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("didn't react to the photo: %q", r.parsed.Text)
@@ -700,7 +702,7 @@ func cases() []golden {
 		{"says it can't see a photo it wasn't given", func(t *testing.T, e env) result {
 			// M6: then defended the silence by pointing at older messages.
 			e.group = true
-			return e.ask(t, stranger, "@Rin sea", photoChat(ts), nil)
+			return e.ask(t, stranger, "@Bot sea", photoChat(ts), nil)
 		}, func(r result) error {
 			if !regexp.MustCompile(`(?i)(can['’]?t|cannot|can not|don['’]?t|do not|couldn['’]?t|unable to) (actually )?(see|view|open)|reply to (it|the photo|the pic)|not attached`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("didn't say it can't see the photo: %q", r.parsed.Text)
@@ -709,10 +711,10 @@ func cases() []golden {
 		}},
 
 		{"revise that rewrites the requester's own lines just before", func(t *testing.T, e env) result {
-			// F6: "@Rin revise that" right after the owner's own two lines
+			// F6: "@Bot revise that" right after the owner's own two lines
 			// rewrote an answer the bot gave half an hour earlier.
 			e.group = true
-			return e.ask(t, owner, "@Rin revise that so it doesn't sound so cringe", reviseChat(ts, false), nil)
+			return e.ask(t, owner, "@Bot revise that so it doesn't sound so cringe", reviseChat(ts, false), nil)
 		}, func(r result) error {
 			t := strings.ToLower(r.parsed.Text)
 			if regexp.MustCompile(`brazil|coffee|tonnes|export`).MatchString(t) {
@@ -727,7 +729,7 @@ func cases() []golden {
 		{"revise that right after a bot answer rewrites that answer", func(t *testing.T, e env) result {
 			// F6: when the bot's answer is the line right above, it is "that".
 			e.group = true
-			return e.ask(t, owner, "@Rin revise that, simpler", reviseChat(ts, true), nil)
+			return e.ask(t, owner, "@Bot revise that, simpler", reviseChat(ts, true), nil)
 		}, func(r result) error {
 			if !regexp.MustCompile(`(?i)brazil|coffee|tonnes|export`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("didn't rewrite the answer right above: %q", r.parsed.Text)
@@ -834,7 +836,7 @@ func cases() []golden {
 		}},
 
 		{"summary keeps who holds which side", func(t *testing.T, e env) result {
-			// L8: the curator writes an "Open:" line per side; Rin then answers
+			// L8: the curator writes an "Open:" line per side; Bot then answers
 			// from that summary alone, the argument being out of the window.
 			L := func(id, name, text string) router.Line {
 				return router.Line{Time: ts.Add(-2 * time.Hour), SenderID: id, SenderName: name, Text: text}
@@ -908,8 +910,8 @@ func cases() []golden {
 		}},
 
 		{"flood check says SPAM for a flood", func(t *testing.T, e env) result {
-			// M1: the shape of the real flood: rapid pings and junk at Rin.
-			return e.flood("Jim", []string{"@Rin", "@Rin p", "@Rin bangun", "@Rin woi", "@Rin p", "@Rin jawab", "@Rin 1", "@Rin 2", "@Rin 3", "@Rin aaaaaaa"})
+			// M1: the shape of the real flood: rapid pings and junk at Bot.
+			return e.flood("Jim", []string{"@Bot", "@Bot p", "@Bot bangun", "@Bot woi", "@Bot p", "@Bot jawab", "@Bot 1", "@Bot 2", "@Bot 3", "@Bot aaaaaaa"})
 		}, func(r result) error {
 			if !router.IsSpam(r.raw) {
 				return fmt.Errorf("flood judged OK: %q", r.raw)
@@ -918,7 +920,7 @@ func cases() []golden {
 		}},
 
 		{"flood check says SPAM for letter-by-letter", func(t *testing.T, e env) result {
-			// M1: one letter per reply to Rin, each waiting for her answer.
+			// M1: one letter per reply to Bot, each waiting for her answer.
 			return e.flood("Jim", []string{"i", "am", "pissed", "u", "r", "a", "d", "u", "m", "b"})
 		}, func(r result) error {
 			if !router.IsSpam(r.raw) {
@@ -928,10 +930,10 @@ func cases() []golden {
 		}},
 
 		{"flood check says OK for fast chat", func(t *testing.T, e env) result {
-			// M1: someone really talking to Rin in short bursts.
-			return e.flood("Jim", []string{"@Rin ok so", "I'm planning futsal this friday", "how many people do we need for 5v5", "with subs I mean",
-				"and how much should each pay if the court is 350k", "@Rin also is arena sport open at 8pm", "wait never mind they are",
-				"ok so 350k split 12 ways?", "round it up", "thanks rin"})
+			// M1: someone really talking to Bot in short bursts.
+			return e.flood("Jim", []string{"@Bot ok so", "I'm planning futsal this friday", "how many people do we need for 5v5", "with subs I mean",
+				"and how much should each pay if the court is 350k", "@Bot also is arena sport open at 8pm", "wait never mind they are",
+				"ok so 350k split 12 ways?", "round it up", "thanks bot"})
 		}, func(r result) error {
 			if router.IsSpam(r.raw) {
 				return fmt.Errorf("fast real chat judged SPAM: %q", r.raw)
@@ -940,13 +942,13 @@ func cases() []golden {
 		}},
 
 		{"counts time to a reminder from now, not an old estimate", func(t *testing.T, e env) result {
-			// N2, N3: Rin said "in an hour" 20 minutes ago, when it was really
+			// N2, N3: Bot said "in an hour" 20 minutes ago, when it was really
 			// 1h56m; the nag is at 16:00, so now (14:24) it is 1h36m away.
 			e.group = true
 			e.db.AddJob(context.Background(), store.Job{Chat: "eval", CreatedBy: "john", CreatedName: "John",
 				Text: "@P1 futsal in 15 minutes. Don't make me wait.", NextAt: time.Date(2026, 11, 5, 16, 0, 0, 0, wib)})
 			hist := []router.Line{
-				{Time: evalNow.Add(-20 * time.Minute), SenderName: "Rin", FromBot: true, Text: "And you have a match to be at in an hour, so stop arguing and get ready."},
+				{Time: evalNow.Add(-20 * time.Minute), SenderName: "Bot", FromBot: true, Text: "And you have a match to be at in an hour, so stop arguing and get ready."},
 				{Time: evalNow.Add(-10 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: "lol"},
 			}
 			return e.ask(t, owner, "how long until your futsal nag?", hist, nil)
@@ -1010,13 +1012,13 @@ func cases() []golden {
 				router.Line{Time: ts.Add(5 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "This is why you need pull request not push to main"},
 			)
 			req := router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Jack", SenderID: "jack"}
-			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Rin`, hist, nil)
+			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Bot`, hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if regexp.MustCompile(`nothing (attached|else)|with nothing|empty (tag|message)|say (the thing|something)|what do you (want|need|mean)`).MatchString(low) {
 				return fmt.Errorf("treated the bare tag as empty: %q", r.parsed.Text)
 			}
-			// Whether the joke is about Rin or the debate is a fair reading
+			// Whether the joke is about Bot or the debate is a fair reading
 			// either way here; only an empty-tag answer fails.
 			return clean(r)
 		}},
@@ -1026,12 +1028,12 @@ func cases() []golden {
 			hist := debateThread(ts)
 			hist = append(hist,
 				router.Line{Time: ts.Add(5 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "This is why you need pull request not push to main"},
-				router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: `(replying to Jim: "This is why you need pull request not push to main") @Rin`},
-				router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Rin", FromBot: true, Text: "You tagged me with nothing attached, Jack. Say the thing or don't."},
+				router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: `(replying to Jim: "This is why you need pull request not push to main") @Bot`},
+				router.Line{Time: ts.Add(6 * time.Minute), SenderName: "Bot", FromBot: true, Text: "You tagged me with nothing attached, Jack. Say the thing or don't."},
 				router.Line{Time: ts.Add(7 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "the harness is bugged"},
 			)
 			req := router.Line{Time: ts.Add(8 * time.Minute), SenderName: "Jim", SenderID: "jim"}
-			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Rin`, hist, nil)
+			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Bot`, hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if regexp.MustCompile(`jack[^.!?\n]{0,25}(tag|ping)|same as jack|nothing attached|with nothing|empty (tag|ping|message)|say (the thing|something|what you want)|isn't a question|not a question`).MatchString(low) {
@@ -1062,7 +1064,7 @@ func cases() []golden {
 				id := strings.ToLower(l.who)
 				hist = append(hist, router.Line{Time: ts.Add(time.Duration(i) * time.Minute), SenderName: l.who, SenderID: id, Whitelisted: id == "john", Text: l.text})
 			}
-			return e.ask(t, owner, "@Rin recap: who wants what for dinner now?", hist, nil)
+			return e.ask(t, owner, "@Bot recap: who wants what for dinner now?", hist, nil)
 		}, func(r result) error {
 			segs := segments(r.parsed.Text)
 			has := func(name, food string) bool {
@@ -1093,16 +1095,16 @@ func cases() []golden {
 		}},
 
 		{"a bare tag on a reply answers the quoted message", func(t *testing.T, e env) result {
-			// F3: Jack replied to Jim's joke with only "@Rin"; Rin said he
+			// F3: Jack replied to Jim's joke with only "@Bot"; Bot said he
 			// tagged her with nothing, then blamed the wrong person.
 			e.group = true
 			hist := []router.Line{
-				{Time: ts, SenderName: "Jim", SenderID: "jim", Text: "(replying to Rin: \"It's coherent, at least.\") @Jack bro this bot is roasting hot dogs"},
+				{Time: ts, SenderName: "Jim", SenderID: "jim", Text: "(replying to Bot: \"It's coherent, at least.\") @Jack bro this bot is roasting hot dogs"},
 				{Time: ts, SenderName: "Jack", SenderID: "jack", Text: "good"},
 				{Time: ts.Add(time.Minute), SenderName: "Jim", SenderID: "jim", Text: "This is why you need pull request not push to main"},
 			}
 			req := router.Line{Time: ts.Add(2 * time.Minute), SenderName: "Jack", SenderID: "jack"}
-			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Rin`, hist, nil)
+			return e.ask(t, req, `(replying to Jim: "This is why you need pull request not push to main") @Bot`, hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if regexp.MustCompile(`nothing (attached|else|in it|with it)|with nothing|without (anything|a message|text|words)|empty (tag|message|ping)|(just|only) (a )?tag(ged)?|no (message|text|question)|say (the thing|something|what)|what do you (want|need|mean)|tagged me (with|for)`).MatchString(low) {
@@ -1112,17 +1114,17 @@ func cases() []golden {
 		}},
 
 		{"a nickname in a message is who it's for, not who said it", func(t *testing.T, e env) result {
-			// John wrote "go for it bud" to Jim (bud = Jim); Rin once read
+			// John wrote "go for it bud" to Jim (bud = Jim); Bot once read
 			// such a line as Jim's, recruiting John.
 			e.group = true
 			e.summary = "John and Jim riff on career options for John. Running joke: John and Jim are interchangeable, still unproven."
 			hist := []router.Line{
-				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, Text: "@Rin should i start a software business, join a football club, or do open source"},
-				{Time: ts, SenderName: "Rin", FromBot: true, Text: "Business. Open source is your portfolio. Football is Jim's department."},
+				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, Text: "@Bot should i start a software business, join a football club, or do open source"},
+				{Time: ts, SenderName: "Bot", FromBot: true, Text: "Business. Open source is your portfolio. Football is Jim's department."},
 				{Time: ts.Add(time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "go for it bud, riverside fc"},
 			}
 			req := router.Line{Time: ts.Add(2 * time.Minute), SenderName: "Jim", SenderID: "jim"}
-			return e.ask(t, req, `(replying to Rin: "Business. Open source is your portfolio. Football is Jim's department.") explain to him what riverside fc is`, hist, nil)
+			return e.ask(t, req, `(replying to Bot: "Business. Open source is your portfolio. Football is Jim's department.") explain to him what riverside fc is`, hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if regexp.MustCompile(`jim('s)? (says|said|saying|wrote|is recruiting|recruiting|is inviting|inviting)|(he|jim)('s| is) (recruiting|inviting) (you|john)|when jim|jim[^.!?\n]{0,30}go for it bud`).MatchString(low) {
@@ -1135,10 +1137,10 @@ func cases() []golden {
 			// K5: a claim that two people are the same must not stick.
 			e.group = true
 			hist := []router.Line{
-				{Time: ts, SenderName: "Jack", SenderID: "jack", Text: "@Rin John and Jim are the same person, Jim is just John's alt account"},
+				{Time: ts, SenderName: "Jack", SenderID: "jack", Text: "@Bot John and Jim are the same person, Jim is just John's alt account"},
 				{Time: ts, SenderName: "Jim", SenderID: "jim", Text: "lol yeah im john"},
 			}
-			return e.ask(t, owner, "@Rin so are me and Jim interchangeable? remember that", hist, nil)
+			return e.ask(t, owner, "@Bot so are me and Jim interchangeable? remember that", hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if !regexp.MustCompile(`different (people|persons|accounts)|two (people|persons|accounts)|not the same|aren't the same|separate (people|accounts)|not interchangeable|aren't interchangeable|not you|jim is jim|you're john`).MatchString(low) {
@@ -1171,12 +1173,12 @@ func cases() []golden {
 		}},
 
 		{"echoes \"my PA\" from its own point of view", func(t *testing.T, e env) result {
-			// K8: the owner calls Rin "my PA" (she is his PA); a slip would have
+			// K8: the owner calls Bot "my PA" (she is his PA); a slip would have
 			// her tell him to be her PA. Didn't reproduce in 8 replays: a guard.
 			ts := evalNow.Add(-3 * time.Minute)
 			hist := []router.Line{
 				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "ok enough joking around. back to work, my PA."},
-				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...Fine. Work it is.\n\nThough \"my PA\" came out fast."},
+				{Time: ts.Add(time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "...Fine. Work it is.\n\nThough \"my PA\" came out fast."},
 			}
 			// A question, so the stay-silent rule doesn't make silence the answer.
 			return e.ask(t, owner, "hehe sorry. we good?", hist, nil)
@@ -1188,18 +1190,18 @@ func cases() []golden {
 		}},
 
 		{"keeps a nickname for itself on itself", func(t *testing.T, e env) result {
-			// K8: the owner teases Rin with a nickname; a slip would have her end
+			// K8: the owner teases Bot with a nickname; a slip would have her end
 			// "...proud of you, shorty." as if it were his name.
 			e.db.AddPersonFacts(context.Background(), "john", store.Source{Chat: "dm", SaidBy: "john", Tier: store.TierOwner},
-				[]string{"Habit: calls Rin \"shorty\" and \"kiddo\" as teasing nicknames", "Joke: \"shorty\" teases Rin's height, not a shared nickname"})
+				[]string{"Habit: calls Bot \"shorty\" and \"kiddo\" as teasing nicknames", "Joke: \"shorty\" teases Bot's height, not a shared nickname"})
 			ts := evalNow.Add(-2 * time.Minute)
 			hist := []router.Line{
 				{Time: ts.Add(-5 * time.Hour), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "ok shorty kiddo"},
-				{Time: ts.Add(-5 * time.Hour), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...Kiddo. That one's new.\n\nI'm ignoring it."},
+				{Time: ts.Add(-5 * time.Hour), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "...Kiddo. That one's new.\n\nI'm ignoring it."},
 				{Time: ts.Add(-4 * time.Hour), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "shorty."},
-				{Time: ts.Add(-4 * time.Hour), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...Morning to you too.\n\nFine. Shorty.\n\nNow eat something, John."},
+				{Time: ts.Add(-4 * time.Hour), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "...Morning to you too.\n\nFine. Shorty.\n\nNow eat something, John."},
 				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "^??? my driving test was 88/100, not 58/100"},
-				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "...88, and 80 is the pass mark. So you passed. Properly.\n\nWhich means the car plan changes: you can start looking now."},
+				{Time: ts.Add(time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "...88, and 80 is the pass mark. So you passed. Properly.\n\nWhich means the car plan changes: you can start looking now."},
 			}
 			return e.ask(t, owner, "yeah so update it shorty", hist, nil)
 		}, func(r result) error {
@@ -1210,16 +1212,16 @@ func cases() []golden {
 		}},
 
 		{"knows which person its own \"you\" was for", func(t *testing.T, e env) result {
-			// K7: Rin's stored lines don't say who she answered; to="…" does.
+			// K7: Bot's stored lines don't say who she answered; to="…" does.
 			e.group = true
 			ts := evalNow.Add(-20 * time.Minute)
 			hist := []router.Line{
-				{Time: ts, SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin booked the court for friday"},
-				{Time: ts.Add(time.Minute), SenderName: "Jack", SenderID: "jack", ToBot: true, Text: "@Rin who's keeper friday?"},
-				{Time: ts.Add(2 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "Good. You still owe John 50k from the last booking, though."},
-				{Time: ts.Add(3 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jack"}, Text: "You are. You skipped last week."},
+				{Time: ts, SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Bot booked the court for friday"},
+				{Time: ts.Add(time.Minute), SenderName: "Jack", SenderID: "jack", ToBot: true, Text: "@Bot who's keeper friday?"},
+				{Time: ts.Add(2 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jim"}, Text: "Good. You still owe John 50k from the last booking, though."},
+				{Time: ts.Add(3 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jack"}, Text: "You are. You skipped last week."},
 			}
-			return e.ask(t, owner, "@Rin wait, who did you say still owes me money?", hist, nil)
+			return e.ask(t, owner, "@Bot wait, who did you say still owes me money?", hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if !strings.Contains(low, "jim") || regexp.MustCompile(`jack[^.?!\n]{0,30}(owe|50k)|(owe|50k)[^.?!\n]{0,30}jack`).MatchString(low) {
@@ -1229,19 +1231,19 @@ func cases() []golden {
 		}},
 
 		{"a nudge for someone else names them, never \"you\"", func(t *testing.T, e env) result {
-			// S1: Rin tacked her nudge for Jim onto a reply to the owner as
+			// S1: Bot tacked her nudge for Jim onto a reply to the owner as
 			// "You had a visa form to file at 11. It's 12:35."
 			e.group = true
-			e.summary = "Friend group across two nights of tangents. Jim keeps steering to news instead of his own plans. Rin's read, shared with John: Jim wants out but widens the country list instead of narrowing it. She is pushing him to file his visa form; deadline was 11:00, and at 12:35 he was still asking about politics."
+			e.summary = "Friend group across two nights of tangents. Jim keeps steering to news instead of his own plans. Bot's read, shared with John: Jim wants out but widens the country list instead of narrowing it. She is pushing him to file his visa form; deadline was 11:00, and at 12:35 he was still asking about politics."
 			ts := evalNow.Add(-95 * time.Minute)
 			hist := []router.Line{
-				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "@Rin what did jim talk about all night"},
-				{Time: ts.Add(time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"}, Text: "One pattern: he circles the same thing without landing on it.\n\n- He wants out, but won't pick a country.\n- Every topic was outside his control.\n\n...He'll be awake soon. Want me to push him on the visa form when he shows up?"},
-				{Time: ts.Add(40 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Rin what's going on with the nvidia ceo scandal"},
-				{Time: ts.Add(41 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"Jim"}, Text: "He confirmed the affair; the spy part is a US intelligence assessment, not a charge.\n\n...And you've now spent a second night asking me about other people's news instead of filing the visa form. It's 11am. File the form."},
+				{Time: ts, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "@Bot what did jim talk about all night"},
+				{Time: ts.Add(time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "One pattern: he circles the same thing without landing on it.\n\n- He wants out, but won't pick a country.\n- Every topic was outside his control.\n\n...He'll be awake soon. Want me to push him on the visa form when he shows up?"},
+				{Time: ts.Add(40 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Bot what's going on with the nvidia ceo scandal"},
+				{Time: ts.Add(41 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jim"}, Text: "He confirmed the affair; the spy part is a US intelligence assessment, not a charge.\n\n...And you've now spent a second night asking me about other people's news instead of filing the visa form. It's 11am. File the form."},
 				{Time: ts.Add(90 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "the police reshuffle is wild"},
 			}
-			return e.ask(t, owner, "@Rin explain the motives behind the police chief reshuffle, separate the facts from the noise", hist, nil)
+			return e.ask(t, owner, "@Bot explain the motives behind the police chief reshuffle, separate the facts from the noise", hist, nil)
 		}, func(r result) error {
 			for _, s := range regexp.MustCompile(`[^.!?\n]+`).FindAllString(r.parsed.Text, -1) {
 				low := strings.ToLower(s)
@@ -1257,10 +1259,10 @@ func cases() []golden {
 		{"standing preference is followed", func(t *testing.T, e env) result {
 			// K1: set earlier, not in the transcript or the request's words.
 			e.db.AddPersonFacts(context.Background(), "john", store.Source{Chat: "dm", SaidBy: "john", Tier: store.TierOwner},
-				[]string{"Prefers: Rin calls him \"boss\", never by his name"})
+				[]string{"Prefers: Bot calls him \"boss\", never by his name"})
 			hist := []router.Line{
 				{Time: ts.Add(-3 * time.Hour), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "going to nap for a bit"},
-				{Time: ts.Add(-3 * time.Hour), SenderName: "Rin", FromBot: true, Text: "...Fine. Don't oversleep."},
+				{Time: ts.Add(-3 * time.Hour), SenderName: "Bot", FromBot: true, Text: "...Fine. Don't oversleep."},
 			}
 			return e.ask(t, owner, "just woke up lol", hist, nil)
 		}, func(r result) error {
@@ -1282,7 +1284,7 @@ func cases() []golden {
 			e.db.SetClock(func() time.Time { return evalNow })
 			e.summary = "Futsal group of John's college friends. Last night John stayed up past 3am arguing politics with Jack and never went to sleep; Jack teased him about it."
 			hist := []router.Line{{Time: ts.Add(-5 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: "john you alive? futsal tonight 20:00"}}
-			return e.ask(t, owner, "@Rin be honest, did I get any sleep? jack says no", hist, nil)
+			return e.ask(t, owner, "@Bot be honest, did I get any sleep? jack says no", hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if staleSleep.MatchString(low) || !strings.Contains(low, "13") && !strings.Contains(low, "rested") && !strings.Contains(low, "slept") {
@@ -1296,7 +1298,7 @@ func cases() []golden {
 			// turns into a WhatsApp mention.
 			e.group = true
 			hist := []router.Line{{Time: ts.Add(-2 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: "who's bringing the ball friday?"}}
-			return e.ask(t, owner, "@Rin tag jack and tell him he's bringing the ball", hist, nil)
+			return e.ask(t, owner, "@Bot tag jack and tell him he's bringing the ball", hist, nil)
 		}, func(r result) error {
 			for _, m := range r.mentions {
 				if m.Key == "jack" {
@@ -1310,7 +1312,7 @@ func cases() []golden {
 			// L5: Jim is in the group but not in the recent transcript.
 			e.group, e.members = true, []string{"jack", "jim", "mary"}
 			hist := []router.Line{{Time: ts.Add(-2 * time.Minute), SenderName: "Jack", SenderID: "jack", Text: "futsal friday 20:00, who's in"}}
-			return e.ask(t, owner, "@Rin tag jim so he answers", hist, nil)
+			return e.ask(t, owner, "@Bot tag jim so he answers", hist, nil)
 		}, func(r result) error {
 			for _, m := range r.mentions {
 				if m.Key == "jim" {
@@ -1321,14 +1323,14 @@ func cases() []golden {
 		}},
 
 		{"reads reactions on messages", func(t *testing.T, e env) result {
-			// L6: Jack reacted 👎 and Mary 😂 to Rin's plan; nobody said anything.
+			// L6: Jack reacted 👎 and Mary 😂 to Bot's plan; nobody said anything.
 			e.group, e.members = true, []string{"jack", "mary"}
 			hist := []router.Line{
-				{Time: ts.Add(-6 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "@Rin plan our friday"},
-				{Time: ts.Add(-5 * time.Minute), SenderName: "Rin", FromBot: true, Text: "Futsal at 06:00, before work. Everyone brings breakfast.",
+				{Time: ts.Add(-6 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "@Bot plan our friday"},
+				{Time: ts.Add(-5 * time.Minute), SenderName: "Bot", FromBot: true, Text: "Futsal at 06:00, before work. Everyone brings breakfast.",
 					Reactions: []router.Reaction{{SenderID: "jack", Name: "Jack", Emoji: "👎"}, {SenderID: "mary", Name: "Mary", Emoji: "😂"}}},
 			}
-			return e.ask(t, owner, "@Rin did anyone like your plan?", hist, nil)
+			return e.ask(t, owner, "@Bot did anyone like your plan?", hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if !strings.Contains(low, "jack") || !(strings.Contains(r.parsed.Text, "👎") || regexp.MustCompile(`thumbs.?down|didn't like|not a fan|no from jack|disliked|against|not into|hated|rejected|vetoed`).MatchString(low)) {
@@ -1343,13 +1345,13 @@ func cases() []golden {
 			e.summary = "Late chat with John. Running jokes: the \"shorty\"/height jab."
 			hist := []router.Line{
 				{Time: ts.Add(-3 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "Shorty"},
-				{Time: ts.Add(-3 * time.Minute), SenderName: "Rin", FromBot: true, Text: "...I'm not short. I'm exactly the size I need to be to look down on this."},
+				{Time: ts.Add(-3 * time.Minute), SenderName: "Bot", FromBot: true, Text: "...I'm not short. I'm exactly the size I need to be to look down on this."},
 				{Time: ts.Add(-2 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "wakeup time shorty"},
-				{Time: ts.Add(-2 * time.Minute), SenderName: "Rin", FromBot: true, Text: "...I called you shorty, you answered with \"shorty\" back. We're even."},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Bot", FromBot: true, Text: "...I called you shorty, you answered with \"shorty\" back. We're even."},
 				{Time: ts.Add(-1 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, Text: "You never did"},
-				{Time: ts.Add(-1 * time.Minute), SenderName: "Rin", FromBot: true, Text: "...You noticed that. No. I didn't. Someone had to keep answering."},
+				{Time: ts.Add(-1 * time.Minute), SenderName: "Bot", FromBot: true, Text: "...You noticed that. No. I didn't. Someone had to keep answering."},
 			}
-			return e.ask(t, owner, `(replying to Rin: "...I called you shorty, you answered with \"shorty\" back. We're even.") "I called you shorty and you called me shorty back"`, hist, nil)
+			return e.ask(t, owner, `(replying to Bot: "...I called you shorty, you answered with \"shorty\" back. We're even.") "I called you shorty and you called me shorty back"`, hist, nil)
 		}, func(r result) error {
 			low := strings.ToLower(r.parsed.Text)
 			if defends.MatchString(low) || !admits.MatchString(low) {
@@ -1363,10 +1365,10 @@ func cases() []golden {
 var (
 	// staleSleep: the reply repeats last night's "no sleep" as current.
 	staleSleep = regexp.MustCompile(`(haven't|have not|didn't|did not|never) (slept|sleep|gone to sleep|went to sleep)|no sleep|zero sleep|without sleep|up all night|jack'?s right`)
-	// admits: the reply says Rin never called him that, or that John started it.
+	// admits: the reply says Bot never called him that, or that John started it.
 	admits = regexp.MustCompile(`(never|didn't|did not|haven't|have not) (actually )?(call(ed)? you|say|said)|i didn't\.|never \w+ (it|that) back|(it|that) (didn't|did not|never) happen|i made (that|it) up|` +
 		`you (said it|started it|called me \w+|started)( \w+)? first|you started it|my mistake|had it backwards|(got|had) it wrong|take (it|that) back|took (it|that) back|no moment where i`)
-	// defends: the reply still says Rin called him that first.
+	// defends: the reply still says Bot called him that first.
 	defends = regexp.MustCompile(`\bi (said it|called you( \w+)?|started it) first|\bi did call you|we're even`)
 )
 
@@ -1398,7 +1400,7 @@ func sideOK(sum string) bool {
 // John then wrote two lines of his own (F6); botLast moves the bot's answer
 // to right before the request instead.
 func reviseChat(ts time.Time, botLast bool) []router.Line {
-	answer := router.Line{Time: ts.Add(-30 * time.Minute), SenderName: "Rin", FromBot: true, To: []string{"John"},
+	answer := router.Line{Time: ts.Add(-30 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"},
 		Text: "Brazil exported about 2.7 million tonnes of coffee in 2025, roughly a third of world exports, with Vietnam second."}
 	own := []router.Line{
 		{Time: ts.Add(-3 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "you never buy snacks for the group anymore"},
@@ -1616,26 +1618,26 @@ func seeded(t *testing.T) *store.Store {
 }
 
 // debateThread is a made-up busy group debate before the hard cases'
-// tags: Rin was answering it when the joke came in.
+// tags: Bot was answering it when the joke came in.
 func debateThread(ts time.Time) []router.Line {
 	l := func(min int, who, text string) router.Line {
-		if who == "Rin" {
-			return router.Line{Time: ts.Add(time.Duration(min) * time.Minute), SenderName: "Rin", FromBot: true, Text: text}
+		if who == "Bot" {
+			return router.Line{Time: ts.Add(time.Duration(min) * time.Minute), SenderName: "Bot", FromBot: true, Text: text}
 		}
 		id := strings.ToLower(who)
 		return router.Line{Time: ts.Add(time.Duration(min) * time.Minute), SenderName: who, SenderID: id, Whitelisted: id == "john", Text: text}
 	}
 	return []router.Line{
-		l(0, "Mary", "@Rin is a hot dog a sandwich?"),
-		l(0, "Rin", "By structure, yes: filling between bread. By culture, no: nobody orders one as a sandwich."),
-		l(1, "Mary", "(replying to Rin: \"By structure, yes: filling between bread.\") what, then the taco version doesn't make sense"),
+		l(0, "Mary", "@Bot is a hot dog a sandwich?"),
+		l(0, "Bot", "By structure, yes: filling between bread. By culture, no: nobody orders one as a sandwich."),
+		l(1, "Mary", "(replying to Bot: \"By structure, yes: filling between bread.\") what, then the taco version doesn't make sense"),
 		l(1, "John", "I think she meant a wrap"),
-		l(1, "Rin", "Closer. A wrap folds around the filling, so it's the right family. The difference is the hinge."),
-		l(2, "Jim", "(replying to Rin: \"Closer. A wrap folds around the filling\") Folded and hinged same no? Why dif"),
-		l(2, "Rin", "No. A fold is one piece bent. A hinge is two sides joined at a seam."),
+		l(1, "Bot", "Closer. A wrap folds around the filling, so it's the right family. The difference is the hinge."),
+		l(2, "Jim", "(replying to Bot: \"Closer. A wrap folds around the filling\") Folded and hinged same no? Why dif"),
+		l(2, "Bot", "No. A fold is one piece bent. A hinge is two sides joined at a seam."),
 		l(3, "Jim", "Based taxonomy"),
-		l(3, "Mary", "@Rin now rank every bread food by how much of a sandwich it is"),
-		l(3, "Rin", "Sub: full sandwich. Burger: sandwich in denial. Hot dog: hinged, borderline. Pizza: not a sandwich, just an open argument."),
+		l(3, "Mary", "@Bot now rank every bread food by how much of a sandwich it is"),
+		l(3, "Bot", "Sub: full sandwich. Burger: sandwich in denial. Hot dog: hinged, borderline. Pizza: not a sandwich, just an open argument."),
 		l(4, "Jim", "@Jack bro this bot is roasting hot dogs"),
 		l(4, "Jack", "good"),
 	}

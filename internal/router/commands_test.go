@@ -11,12 +11,12 @@ func TestParseCommand(t *testing.T) {
 	for in, want := range map[string]string{
 		"!reset":                     "reset|",
 		"  !RESET  ":                 "reset|",
-		"@Rin !reset":                "reset|",
+		"@Bot !reset":                "reset|",
 		"!key":                       "key|",
 		"!key tasks.example.com abc": "key|tasks.example.com abc",
 		"!key h X-Api-Key: v":        "key|h X-Api-Key: v",
 		"!budget":                    "budget|",
-		"@Rin !help":                 "help|",
+		"@Bot !help":                 "help|",
 		"!provider":                  "provider|",
 		"!Provider openrouter":       "provider|openrouter",
 		"/reset":                     "", // L12: "/" is other bots' prefix now
@@ -41,7 +41,7 @@ func TestParseCommand(t *testing.T) {
 func TestMuteCommands(t *testing.T) {
 	for in, want := range map[string]string{
 		"!mute @6281 30m": "mute [@6281 30m]",
-		"@Rin !unmute @x": "unmute [@x]",
+		"@Bot !unmute @x": "unmute [@x]",
 		"!MUTE":           "mute []",
 	} {
 		c, ok := ParseCommand(in)

@@ -163,8 +163,8 @@ func TestNearDuplicatesOverwrite(t *testing.T) {
 	ctx := context.Background()
 	inf := Source{Chat: "g", Tier: TierInferred}
 	s.AddPersonFacts(ctx, "f", inf, []string{
-		`Behavior: repeatedly demanded Rin say "banana" as bait`,
-		`Behavior: spams "say banana" to provoke Rin`,
+		`Behavior: repeatedly demanded Bot say "banana" as bait`,
+		`Behavior: spams "say banana" to provoke Bot`,
 		`Behavior: escalates prayer requests from Hebrew to hieroglyphics to cuneiform`,
 		`Behavior: escalates prayer requests to Chinese and Japanese`,
 		`Behavior: quizzes assistant on factorials and pi digits`,
@@ -173,7 +173,7 @@ func TestNearDuplicatesOverwrite(t *testing.T) {
 	})
 	got, _ := s.SearchPersonFacts(ctx, []string{"f"}, "", 30, false)
 	want := map[string]bool{
-		`Behavior: spams "say banana" to provoke Rin`:                 true,
+		`Behavior: spams "say banana" to provoke Bot`:                 true,
 		`Behavior: escalates prayer requests to Chinese and Japanese`: true,
 		`Behavior: quizzes assistant on factorials and pi digits`:     true,
 		"Alias: Joko": true, "Alias: Joko Santoso": true, "Likes: chess": true, "Games: chess puzzles": true,

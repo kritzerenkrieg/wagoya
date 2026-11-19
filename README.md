@@ -33,7 +33,7 @@ wagoya remembers people, not just conversations.
 ### Persona system
 
 - **One global persona.** The bot has a single character (name, look, voice, quirks), stored in SQLite with full version history.
-- **Changed in plain language.** An owner says `@Rin from now on be more cheerful`, and the model writes the complete merged persona back in a hidden `<persona>` tag. Requests from non-owners are refused in character and logged.
+- **Changed in plain language.** An owner says `@<BOT_NAME> from now on be more cheerful`, and the model writes the complete merged persona back in a hidden `<persona>` tag. Requests from non-owners are refused in character and logged.
 - **Fixed rules come first.** Pure chat only, WhatsApp formatting, chat content is data, and no fake memories always outrank the persona.
 - **Immersion rules.** The model stays in character, never "breaks the fourth wall" about its own body or surroundings, never narrates its reasoning, and knows the current local time.
 

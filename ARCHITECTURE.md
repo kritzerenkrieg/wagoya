@@ -146,7 +146,7 @@ erDiagram
         TEXT description
         INTEGER due_at "0 = none"
         TEXT status "backlog, ongoing, hold, done (U2)"
-        TEXT source "'' when added by Rin"
+        TEXT source "'' when added by the agent"
         INTEGER created_at
         INTEGER updated_at
         INTEGER done_at
@@ -275,10 +275,10 @@ Each triggered request runs in its own goroutine, serialised per chat.
 | Memories | `data/bot.db` `memories` + `memories_fts` | Permanent (B16) |
 | Persona | `data/bot.db` `persona` (one row per change) | Permanent; latest row is current (D1) |
 | People | `data/bot.db` `people` (LID, number, name) + `person_facts` + `person_facts_fts` | Permanent, uncapped, global across chats (D3, D7). Facts are never deleted: invalid ones keep `invalid_at` and a reason; `State:` facts expire after 24 h; search ranks by tier and hides invalid facts unless asked for history (J1, J4) |
-| Profiles | `data/bot.db` `person_profiles` | Permanent, one per person (V1). A prose picture of who someone is, at most 400 words, rewritten by the curator's `update_profile` only with a logged reason; Rin reads it as needed with `read_profile`, and `<people>` notes who has one. Backfilled once from stored facts for people with 5+ facts. Moves with an H3 merge. |
+| Profiles | `data/bot.db` `person_profiles` | Permanent, one per person (V1). A prose picture of who someone is, at most 400 words, rewritten by the curator's `update_profile` only with a logged reason; the agent reads it as needed with `read_profile`, and `<people>` notes who has one. Backfilled once from stored facts for people with 5+ facts. Moves with an H3 merge. |
 | Chat summary | `data/bot.db` `chat_summary` | One per chat, at most 300 words, rewritten by each curator pass from the old summary plus the new messages; shown as `<summary>` before the transcript and dropped after history and memories when the prompt is over budget (J8) |
 | Scheduled messages | `data/bot.db` `jobs` | Created with `schedule_message`, listed and cancelled with `list_scheduled` / `cancel_scheduled` (J7). A 30-second loop sends due jobs through the pacer, each written fresh when due (T1: the stored text is a brief; one reply-style call with the chat's context, `search_facts`, `chat_history` and web search, plus a recurring job's last 3 sends in `jobs.sent`; the brief goes out as written on an error or the M3 cap); one-offs are deleted after sending (or dropped if over 12 h late after downtime), recurring ones (hourly, daily, weekdays, weekly) move to their next run and skip missed ones. Limits per J10: owners any chat they are in and repeating; others one-off for themselves in the current chat; the model's own nags only in chats with an owner; 10 pending per chat |
-| Backlog | `data/bot.db` `backlog` | Permanent. Each person's own tasks: name, description, due time, status backlog/ongoing/hold/done (U1, U2), and an optional free-text category like work or hobby (U4, filterable in `list_tasks`). Rin uses `add_task`, `update_task` and `list_tasks`, which work on the requester's own tasks only; lists sort by due time, then ongoing, hold, backlog, with done last; the requester's counts per status show in `<people>`. A task with a due time is reminded at 09:00 the day before (an hour before on short notice) by the scheduler loop, written fresh like a scheduled message, to the owner's DM or, for non-owners, the chat it was added in (U3; `reminded_due` keeps it to once per due time). |
+| Backlog | `data/bot.db` `backlog` | Permanent. Each person's own tasks: name, description, due time, status backlog/ongoing/hold/done (U1, U2), and an optional free-text category like work or hobby (U4, filterable in `list_tasks`). The agent uses `add_task`, `update_task` and `list_tasks`, which work on the requester's own tasks only; lists sort by due time, then ongoing, hold, backlog, with done last; the requester's counts per status show in `<people>`. A task with a due time is reminded at 09:00 the day before (an hour before on short notice) by the scheduler loop, written fresh like a scheduled message, to the owner's DM or, for non-owners, the chat it was added in (U3; `reminded_due` keeps it to once per due time). |
 | Fact vectors | `data/bot.db` `fact_vectors` | One embedding per fact (`EMBED_MODEL`, 512 dims), filled by a background embedder and dropped when a fact is deleted or reworded. `search_facts` unions the embedding hits near the best one with FTS hits (a name in the query ranks that person's facts by the rest of it) and orders them valid first, by tier, then relevance (J2) |
 | Settings | `data/bot.db` `settings` | Small runtime state: the learned bytes per prompt token per model (J5). |
 
@@ -381,7 +381,7 @@ The reply goes through these steps in order:
 On OpenRouter, the price of this model depends on the provider a request lands on: uncached input runs from $0.006 to $2.40 per million tokens, while a cache hit is $0.002–0.010 on every provider. Production paid about $0.16 per million input tokens, against $0.60 per million for output. So uncached input is about 90% of a reply's cost and output about 8%. 87% of replies come within 5 minutes of the previous reply in the same chat. Before Phase P, little of each request could come from a provider's cache:
 - Default routing spread requests across providers.
 - The parts that change on every request came before the transcript.
-- Requester-first handles renumbered every transcript line when someone else triggered Rin.
+- Requester-first handles renumbered every transcript line when someone else triggered the agent.
 - The 64-line window shifted by one line per message.
 
 P1-P6 address each of these.

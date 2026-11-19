@@ -462,7 +462,7 @@ func (b *bot) onMessage(e *events.Message) {
 		return
 	}
 	if !wl && !e.Info.IsFromMe && key != "" && d.Action == router.Reply {
-		// M1: only messages to Rin count; chat with others (or another bot) doesn't
+		// M1: only messages to the bot count; chat with others (or another bot) doesn't
 		floodText := text
 		if img != nil {
 			floodText = strings.TrimSpace("[image] " + text)
@@ -514,7 +514,7 @@ func (b *bot) onMessage(e *events.Message) {
 		log.Printf("history: %v", err)
 	}
 	if !isGroup && qName == "" && qText == "" && qImg == nil {
-		// F4: an unquoted DM right after Rin's message answers that message.
+		// F4: an unquoted DM right after the bot's message answers that message.
 		if q, ok := router.ImplicitQuote(history); ok {
 			prompt = router.WithQuote(d.Prompt, b.cfg.BotName, q, 4000)
 		}
@@ -544,7 +544,7 @@ func (b *bot) onMessage(e *events.Message) {
 	var image *llm.Image
 	imageNote := ""
 	if img == nil && qImg != nil && d.Action == router.Reply {
-		img = qImg // F1: "@Rin what's this" replying to an image
+		img = qImg // F1: "@<BOT_NAME> what's this" replying to an image
 	}
 	if isGroup && img == nil && qName == "" && qText == "" && d.Action == router.Reply {
 		if r, ok := b.lastImage(chatKey, e.Info.Timestamp); ok { // F5
