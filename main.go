@@ -1513,6 +1513,12 @@ func (b *bot) effortFor(provider string) string {
 	return config.DefaultEffort
 }
 
+// effortOf is a provider's effort setting with what its client really runs
+// at (Y1), for every reply that shows an effort.
+func effortOf(provider, e string) router.Effort {
+	return router.Effort{Set: e, Runs: llm.EffectiveEffort(provider, e)}
+}
+
 // effortKey is the settings key of a provider's !reasoning level (Y1).
 func effortKey(provider string) string { return "effort:" + provider }
 
@@ -1574,7 +1580,7 @@ func (b *bot) providerCommand(args []string) string {
 	var list []router.ProviderInfo
 	for _, name := range config.Providers {
 		pc := b.cfg.Ready[name]
-		list = append(list, router.ProviderInfo{Name: name, Model: pc.Model, Effort: b.effortFor(name)})
+		list = append(list, router.ProviderInfo{Name: name, Model: pc.Model, Effort: effortOf(name, b.effortFor(name))})
 	}
 	if len(args) == 0 {
 		return router.ProviderText(active, list, "")
@@ -1592,7 +1598,7 @@ func (b *bot) providerCommand(args []string) string {
 	effort := b.effortFor(name)
 	b.models.Store(newModels(b.cfg, name, effort, true))
 	log.Printf("provider switched: %s -> %s (L13)", active, name)
-	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, effort, b.cfg.Provider)
+	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, effortOf(name, effort), b.cfg.Provider)
 }
 
 // reasoningCommand runs !reasoning (Y1): with a level it saves it for the
@@ -1603,7 +1609,7 @@ func (b *bot) reasoningCommand(ctx context.Context, args []string) string {
 	defer b.modelsMu.Unlock()
 	m := b.models.Load()
 	def := config.DefaultEffort
-	effort := func(e string) router.Effort { return router.Effort{Set: e, Runs: llm.EffectiveEffort(m.provider, e)} }
+	effort := func(e string) router.Effort { return effortOf(m.provider, e) }
 	if len(args) == 0 {
 		return router.ReasoningText(m.provider, effort(m.effort), def, "")
 	}

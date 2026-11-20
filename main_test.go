@@ -130,7 +130,7 @@ func TestReasoningCommand(t *testing.T) {
 		t.Fatalf("openrouter took another provider's effort: %q, %s", got, effort())
 	}
 	b.reasoningCommand(ctx, []string{"high"})
-	if got := b.providerCommand([]string{"anthropic"}); !strings.Contains(got, "effort none") || effort() != "none" {
+	if got := b.providerCommand([]string{"anthropic"}); !strings.Contains(got, "effort none (runs as low).") || effort() != "none" {
 		t.Fatalf("anthropic lost its own effort: %q, %s", got, effort())
 	}
 	if list := b.providerCommand(nil); !strings.Contains(list, "openrouter: deepseek/deepseek-v4.1-flash-1017, effort high") {

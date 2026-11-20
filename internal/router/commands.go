@@ -83,7 +83,8 @@ const HelpText = "Owner commands:\n" +
 // ProviderInfo is one provider in the !provider list (L13). Model is empty
 // when its credentials aren't set.
 type ProviderInfo struct {
-	Name, Model, Effort string
+	Name, Model string
+	Effort      Effort // Y1: shown with what it really runs at
 }
 
 // ProviderText is the !provider reply for no argument or a wrong one (L13):

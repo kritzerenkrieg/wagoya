@@ -93,11 +93,11 @@ func TestHelpText(t *testing.T) {
 // L13: the list shows the active provider and which ones aren't set up.
 func TestProviderText(t *testing.T) {
 	got := ProviderText("openai", []ProviderInfo{
-		{Name: "anthropic", Model: "claude-haiku-5-5", Effort: "low"},
+		{Name: "anthropic", Model: "claude-haiku-5-5", Effort: Effort{"none", "low"}},
 		{Name: "openrouter"},
-		{Name: "openai", Model: "abliterated-model", Effort: "none"},
+		{Name: "openai", Model: "abliterated-model", Effort: Effort{"none", "none"}},
 	}, `Unknown provider "gpt".`)
-	for _, want := range []string{`Unknown provider "gpt".`, "Active provider: *openai*", "- anthropic: claude-haiku-5-5, effort low\n",
+	for _, want := range []string{`Unknown provider "gpt".`, "Active provider: *openai*", "- anthropic: claude-haiku-5-5, effort none (runs as low)\n",
 		"- openrouter: not set up", "- openai: abliterated-model, effort none (active)", "Usage: !provider anthropic"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
