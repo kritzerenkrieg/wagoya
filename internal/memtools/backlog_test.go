@@ -156,3 +156,13 @@ their categories:`
 		t.Fatalf("list:\n%s", out)
 	}
 }
+
+// U3: a task's reminder time carries its date, so the model doesn't pair the
+// weekday with the due date (it said "Thu 27 Nov" for Thu 26 Nov).
+func TestTaskReminderDate(t *testing.T) {
+	ann := backlogTurn(t, openDB(t), router.Line{SenderID: "ann", SenderName: "Ann"})
+	out := ann("add_task", `{"name":"Report","due":"2026-11-08 18:00"}`)
+	if !strings.Contains(out, "due Sun 2026-11-08 18:00 (in 3d3h), reminder Sat 2026-11-07 09:00 |") {
+		t.Fatalf("add: %s", out)
+	}
+}

@@ -318,7 +318,7 @@ func (t *Turn) taskLine(td store.Todo) string {
 			case td.RemindedDue.Equal(td.Due):
 				due += ", reminder sent"
 			case !r.IsZero() && r.After(now):
-				due += ", reminder " + r.In(now.Location()).Format("Mon 15:04")
+				due += ", reminder " + r.In(now.Location()).Format("Mon 2006-01-02 15:04") // a bare weekday got the wrong date
 			}
 		}
 	}
