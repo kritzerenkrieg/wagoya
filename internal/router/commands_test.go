@@ -19,6 +19,8 @@ func TestParseCommand(t *testing.T) {
 		"@Bot !help":                 "help|",
 		"!provider":                  "provider|",
 		"!Provider openrouter":       "provider|openrouter",
+		"!reasoning":                 "reasoning|",
+		"@Bot !Reasoning HIGH":       "reasoning|HIGH",
 		"/reset":                     "", // L12: "/" is other bots' prefix now
 		"/budget":                    "",
 		"!keys":                      "",
@@ -78,7 +80,7 @@ func TestBudgetText(t *testing.T) {
 
 // L12: !help lists every command, all with the "!" prefix.
 func TestHelpText(t *testing.T) {
-	for _, c := range []string{"!help", "!budget", "!provider", "!reset", "!mute", "!unmute", "!key"} {
+	for _, c := range []string{"!help", "!budget", "!provider", "!reasoning", "!reset", "!mute", "!unmute", "!key"} {
 		if !strings.Contains(HelpText, c) {
 			t.Errorf("help misses %s", c)
 		}
@@ -100,6 +102,25 @@ func TestProviderText(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+// Y1: the effort shown, Claude's fallback for none, the default after a change.
+func TestReasoningText(t *testing.T) {
+	got := ReasoningText("anthropic", "none", "medium", `Unknown level "max".`)
+	for _, want := range []string{`Unknown level "max".`, "Reasoning on *anthropic*: none (runs as low on Claude) (default medium)", "Levels: none, low, medium, high", "Usage: !reasoning medium"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if got := ReasoningText("openrouter", "none", "none", ""); !strings.Contains(got, "*openrouter*: none\n") || strings.Contains(got, "default") {
+		t.Errorf("openrouter none: %s", got)
+	}
+	if got := ReasoningSet("openai", "high", "none"); !strings.Contains(got, "*openai* is now high") || !strings.Contains(got, "back to none") {
+		t.Errorf("set: %s", got)
+	}
+	if EffectiveEffort("anthropic", "none") != "low" || EffectiveEffort("openrouter", "none") != "none" || EffectiveEffort("anthropic", "high") != "high" {
+		t.Error("EffectiveEffort")
 	}
 }
 

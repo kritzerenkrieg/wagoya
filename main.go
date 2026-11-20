@@ -43,9 +43,13 @@ type bot struct {
 	wa     *whatsmeow.Client
 	db     *store.Store
 	models atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
-	http   *llm.Tool              // I1: http_request, offered to everyone who can trigger the bot (I2)
-	mcp    []llm.Tool             // I1: MCP tools, offered only to whitelisted requesters (I2)
-	chatMu sync.Map               // chat JID -> *sync.Mutex, one Claude call per chat at a time
+	// Y1: !reasoning's effort per provider, until restart; a provider
+	// without one uses its .env effort. Guarded by modelsMu with the swap.
+	effort   map[string]string
+	modelsMu sync.Mutex
+	http     *llm.Tool  // I1: http_request, offered to everyone who can trigger the bot (I2)
+	mcp      []llm.Tool // I1: MCP tools, offered only to whitelisted requesters (I2)
+	chatMu   sync.Map   // chat JID -> *sync.Mutex, one Claude call per chat at a time
 
 	curMu     sync.Mutex             // one curator pass at a time
 	curIdleMu sync.Mutex             // guards curIdle
@@ -137,7 +141,7 @@ func main() {
 	b := &bot{cfg: cfg, db: db, curIdle: map[string]*time.Timer{}, wlLID: map[string]bool{},
 		pacer: ratelimit.NewPacer(cfg.SendInterval), denyCool: ratelimit.NewCooldown(cfg.DenyCooldown),
 		flood: ratelimit.NewFlood(floodLimit, floodWindow), budgetNoted: map[string]string{}, recentImg: map[string]recentImage{}}
-	b.models.Store(newModels(cfg, cfg.Provider, true))
+	b.models.Store(newModels(cfg, cfg.Provider, cfg.Ready[cfg.Provider].Effort, true))
 	// W1: our own web tools, for everyone. Set up even when the default
 	// provider has no tool calls, since !provider can switch to one that does
 	// (L13); promptBudget and the toolsets check SupportsTools per reply.
@@ -1484,14 +1488,24 @@ func (b *bot) promptBudget(tools bool) int {
 // background passes (H1), which never use the web.
 type models struct {
 	provider string
+	effort   string // the effort both clients run at (L13, Y1)
 	reply    llm.Client
 	curator  llm.Client
 }
 
-func newModels(cfg *config.Config, provider string, announce bool) *models {
-	return &models{provider: provider,
-		reply:   newClient(cfg, provider, cfg.WebTools, announce),
-		curator: newClient(cfg, provider, false, false)}
+func newModels(cfg *config.Config, provider, effort string, announce bool) *models {
+	return &models{provider: provider, effort: effort,
+		reply:   newClient(cfg, provider, effort, cfg.WebTools, announce),
+		curator: newClient(cfg, provider, effort, false, false)}
+}
+
+// effortFor is the effort a provider runs at: !reasoning's, else .env's (Y1).
+// The caller holds modelsMu.
+func (b *bot) effortFor(provider string) string {
+	if e, ok := b.effort[provider]; ok {
+		return e
+	}
+	return b.cfg.Ready[provider].Effort
 }
 
 // replyLLM and curatorLLM are the active provider's clients (L13).
@@ -1499,14 +1513,16 @@ func (b *bot) replyLLM() llm.Client   { return b.models.Load().reply }
 func (b *bot) curatorLLM() llm.Client { return b.models.Load().curator }
 
 // newClient builds the model client for a provider (A5, G1, G5) with that
-// provider's model and effort (L13). The provider must be in cfg.Ready.
-func newClient(cfg *config.Config, provider string, web, announce bool) llm.Client {
+// provider's model and the given effort (L13, Y1). The provider must be in
+// cfg.Ready.
+func newClient(cfg *config.Config, provider, effort string, web, announce bool) llm.Client {
 	logf := func(f string, a ...any) {
 		if announce {
 			log.Printf(f, a...)
 		}
 	}
 	pc := cfg.Ready[provider]
+	pc.Effort = effort
 	switch {
 	case provider == "openrouter":
 		logf("model via OpenRouter, model %s, effort %s", pc.Model, pc.Effort)
@@ -1527,11 +1543,13 @@ func newClient(cfg *config.Config, provider string, web, announce bool) llm.Clie
 // switches replies and the curator to it until the next restart; with no
 // argument, or a wrong one, it lists the providers and the active one.
 func (b *bot) providerCommand(args []string) string {
+	b.modelsMu.Lock()
+	defer b.modelsMu.Unlock()
 	active := b.models.Load().provider
 	var list []router.ProviderInfo
 	for _, name := range config.Providers {
 		pc := b.cfg.Ready[name]
-		list = append(list, router.ProviderInfo{Name: name, Model: pc.Model, Effort: pc.Effort})
+		list = append(list, router.ProviderInfo{Name: name, Model: pc.Model, Effort: b.effortFor(name)})
 	}
 	if len(args) == 0 {
 		return router.ProviderText(active, list, "")
@@ -1546,9 +1564,37 @@ func (b *bot) providerCommand(args []string) string {
 	case name == active:
 		return router.ProviderText(active, list, "Already on "+name+".")
 	}
-	b.models.Store(newModels(b.cfg, name, true))
+	effort := b.effortFor(name)
+	b.models.Store(newModels(b.cfg, name, effort, true))
 	log.Printf("provider switched: %s -> %s (L13)", active, name)
-	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, pc.Effort, b.cfg.Provider)
+	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, effort, b.cfg.Provider)
+}
+
+// reasoningCommand runs !reasoning (Y1): with a level it rebuilds the active
+// provider's reply and curator clients at that effort, until the next
+// restart; with none, or a wrong one, it shows the current effort.
+func (b *bot) reasoningCommand(args []string) string {
+	b.modelsMu.Lock()
+	defer b.modelsMu.Unlock()
+	m := b.models.Load()
+	startup := b.cfg.Ready[m.provider].Effort
+	if len(args) == 0 {
+		return router.ReasoningText(m.provider, m.effort, startup, "")
+	}
+	level := strings.ToLower(args[0])
+	switch {
+	case len(args) > 1 || !slices.Contains(router.Efforts, level):
+		return router.ReasoningText(m.provider, m.effort, startup, fmt.Sprintf("Unknown level %q.", strings.Join(args, " ")))
+	case level == m.effort:
+		return router.ReasoningText(m.provider, m.effort, startup, "Already at "+level+".")
+	}
+	if b.effort == nil {
+		b.effort = map[string]string{}
+	}
+	b.effort[m.provider] = level
+	b.models.Store(newModels(b.cfg, m.provider, level, true))
+	log.Printf("reasoning on %s: %s -> %s (Y1)", m.provider, m.effort, level)
+	return router.ReasoningSet(m.provider, level, startup)
 }
 
 // replyTimeout is how long one incoming message may take, model calls,
@@ -1819,6 +1865,8 @@ func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command
 		b.send(ctx, chat, b.budgetText(ctx), e)
 	case "provider":
 		b.send(ctx, chat, b.providerCommand(cmd.Args), e)
+	case "reasoning":
+		b.send(ctx, chat, b.reasoningCommand(cmd.Args), e)
 	case "web":
 		b.send(ctx, chat, b.webCommand(cmd.Args), e)
 	case "help":

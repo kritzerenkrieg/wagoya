@@ -56,7 +56,7 @@ func TestProviderCommand(t *testing.T) {
 			"openrouter": {Model: "deepseek/deepseek-v4.1-flash-1017", Effort: "low"},
 		}}
 	b := &bot{cfg: cfg}
-	b.models.Store(newModels(cfg, cfg.Provider, false))
+	b.models.Store(newModels(cfg, cfg.Provider, cfg.Ready[cfg.Provider].Effort, false))
 	for _, tc := range []struct {
 		args       []string
 		want, kept string
@@ -78,6 +78,48 @@ func TestProviderCommand(t *testing.T) {
 	}
 	if !b.replyLLM().SupportsTools() || b.curatorLLM() == nil {
 		t.Fatal("clients not swapped")
+	}
+}
+
+// Y1: !reasoning sets the active provider's effort only; each provider
+// keeps its own across !provider switches.
+func TestReasoningCommand(t *testing.T) {
+	cfg := &config.Config{Provider: "anthropic", AnthropicAPIKey: "a", OpenRouterKey: "k", DataDir: t.TempDir(),
+		Ready: map[string]config.ProviderConf{
+			"anthropic":  {Model: "claude-haiku-5-5", Effort: "medium"},
+			"openrouter": {Model: "deepseek/deepseek-v4.1-flash-1017", Effort: "none"},
+		}}
+	b := &bot{cfg: cfg}
+	b.models.Store(newModels(cfg, cfg.Provider, cfg.Ready[cfg.Provider].Effort, false))
+	effort := func() string { return b.models.Load().effort }
+	for _, tc := range []struct {
+		args       []string
+		want, kept string
+	}{
+		{nil, "Reasoning on *anthropic*: medium", "medium"},
+		{[]string{"max"}, `Unknown level "max".`, "medium"},
+		{[]string{"low", "x"}, `Unknown level "low x".`, "medium"},
+		{[]string{"medium"}, "Already at medium.", "medium"},
+		{[]string{"HIGH"}, "Reasoning on *anthropic* is now high", "high"},
+		{[]string{"none"}, "none (runs as low on Claude)", "none"},
+	} {
+		if got := b.reasoningCommand(tc.args); !strings.Contains(got, tc.want) {
+			t.Errorf("%v: %q, want %q", tc.args, got, tc.want)
+		}
+		if effort() != tc.kept {
+			t.Errorf("%v: effort %s, want %s", tc.args, effort(), tc.kept)
+		}
+	}
+	// Switching provider uses that provider's own effort, not anthropic's.
+	if got := b.providerCommand([]string{"openrouter"}); !strings.Contains(got, "effort none") || effort() != "none" {
+		t.Fatalf("openrouter took another provider's effort: %q, %s", got, effort())
+	}
+	b.reasoningCommand([]string{"high"})
+	if got := b.providerCommand([]string{"anthropic"}); !strings.Contains(got, "effort none") || effort() != "none" {
+		t.Fatalf("anthropic lost its own effort: %q, %s", got, effort())
+	}
+	if list := b.providerCommand(nil); !strings.Contains(list, "openrouter: deepseek/deepseek-v4.1-flash-1017, effort high") {
+		t.Errorf("list doesn't show openrouter's effort: %s", list)
 	}
 }
 
