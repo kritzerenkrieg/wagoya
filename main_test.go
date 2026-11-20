@@ -10,6 +10,7 @@ import (
 
 	"github.com/kritzerenkrieg/wagoya/internal/config"
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
+	"github.com/kritzerenkrieg/wagoya/internal/ratelimit"
 	"github.com/kritzerenkrieg/wagoya/internal/router"
 	"github.com/kritzerenkrieg/wagoya/internal/store"
 	"github.com/kritzerenkrieg/wagoya/internal/tools"
@@ -294,10 +295,11 @@ func TestSchedulerShutdown(t *testing.T) {
 	}
 }
 
-// U3: a reminder still queued when shutdown stops waiting is cut off, and
-// its marker is undone so it goes out after the restart; it was never sent,
-// so it still goes out at most once.
-func TestSchedulerShutdownCutsQueuedSend(t *testing.T) {
+// U3, J10: a reminder or one-off is committed (marked, removed) only right
+// before it goes out. One still pending when shutdown stops waiting, in the
+// chat lock, the composition or the send queue, is cut off uncommitted and
+// stays due for the next start; one committed is never undone.
+func TestSchedulerShutdownCutsPendingSend(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 64)
 	if err != nil {
@@ -313,51 +315,54 @@ func TestSchedulerShutdownCutsQueuedSend(t *testing.T) {
 		t.Fatalf("task: %v %v", todos, err)
 	}
 	now := todos[0].RemindAt().Add(time.Minute)
-	quit, stop := context.WithCancel(ctx)
-	b := &bot{db: db, quit: quit, schedBusy: make(chan struct{}, 1), wlLID: map[string]bool{},
-		cfg: &config.Config{WhitelistPN: map[string]bool{"15550001111": true}}}
-	b.cut, b.cutSends = context.WithCancel(ctx)
-	queued := make(chan struct{})
-	b.deliver = func(context.Context, store.Job, types.JID) bool { // stuck in the send queue
-		close(queued)
-		<-b.cut.Done()
-		return false
-	}
-	b.schedBusy <- struct{}{}
-	go func() { b.runTaskReminders(now); <-b.schedBusy }()
-	<-queued
-	if due, _ := db.TodoRemindersDue(ctx, now); len(due) != 0 {
-		t.Fatal("reminder not marked while it is being sent")
-	}
-	stop()
-	b.waitScheduler(50*time.Millisecond, time.Second)
-	if !b.cutOff() {
-		t.Fatal("shutdown didn't cut off the queued send")
-	}
-	if due, err := db.TodoRemindersDue(ctx, now); err != nil || len(due) != 1 {
-		t.Fatalf("cut-off reminder not due again after the restart: %v %v", due, err)
-	}
-}
-
-// J10: a one-off scheduled message cut off unsent by shutdown is put back,
-// so it goes out after the restart.
-func TestSchedulerShutdownKeepsOneOff(t *testing.T) {
-	ctx := context.Background()
-	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 64)
+	oneOff, err := db.AddJob(ctx, store.Job{Chat: "123@g.us", CreatedBy: "ann", Text: "stand-up", NextAt: now.Add(-time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	now := time.Now()
-	if _, err := db.AddJob(ctx, store.Job{Chat: "123@g.us", CreatedBy: "ann", Text: "stand-up", NextAt: now.Add(-time.Minute)}); err != nil {
-		t.Fatal(err)
+	newBot := func() (*bot, context.CancelFunc) {
+		quit, stop := context.WithCancel(ctx)
+		b := &bot{db: db, quit: quit, schedBusy: make(chan struct{}, 1), wlLID: map[string]bool{},
+			cfg: &config.Config{WhitelistPN: map[string]bool{"15550001111": true}}}
+		b.cut, b.cutSends = context.WithCancel(ctx)
+		return b, stop
 	}
-	b := &bot{db: db, schedBusy: make(chan struct{}, 1)}
-	b.cut, b.cutSends = context.WithCancel(ctx)
-	b.deliver = func(context.Context, store.Job, types.JID) bool { b.cutSends(); return false }
+	reminderDue := func() bool { due, _ := db.TodoRemindersDue(ctx, now); return len(due) == 1 }
+	jobDue := func() bool { jobs, _ := db.DueJobs(ctx, now); return len(jobs) == 1 && jobs[0].ID == oneOff }
+
+	// Stuck before the commit (chat lock, composition, queue) past the wait.
+	b, stop := newBot()
+	pending := make(chan struct{}, 2)
+	b.deliver = func(ctx context.Context, _ store.Job, _ types.JID, commit func() bool) {
+		pending <- struct{}{}
+		<-ctx.Done() // the round's context ends with cut, like a composition
+	}
+	b.schedBusy <- struct{}{}
+	go func() { b.runDue(now, 12*time.Hour, 30*time.Minute); b.runTaskReminders(now); <-b.schedBusy }()
+	<-pending
+	stop()
+	b.waitScheduler(50*time.Millisecond, time.Second)
+	if !b.cutOff() || !reminderDue() || !jobDue() {
+		t.Fatalf("cut off before the commit: cut %v, reminder due %v, one-off due %v", b.cutOff(), reminderDue(), jobDue())
+	}
+
+	// The real send path: a queue wait cut by shutdown never commits.
+	b, _ = newBot()
+	b.pacer = ratelimit.NewPacer(time.Hour)
+	_ = b.pacer.Wait(ctx) // the next slot is an hour away
+	committed := false
+	go b.cutSends()
+	if id, ok := b.sendCommit(types.NewJID("15550001111", types.DefaultUserServer), "hi", nil, nil, func() bool { committed = true; return true }); id != "" || ok || committed {
+		t.Fatalf("queued send cut off: id %q, committed %v %v", id, ok, committed)
+	}
+
+	// Committed: marked and removed, and not undone by a shutdown after.
+	b, stop = newBot()
+	b.deliver = func(_ context.Context, _ store.Job, _ types.JID, commit func() bool) { commit() }
 	b.runDue(now, 12*time.Hour, 30*time.Minute)
-	jobs, err := db.DueJobs(ctx, now)
-	if err != nil || len(jobs) != 1 || jobs[0].Text != "stand-up" {
-		t.Fatalf("cut-off one-off not put back: %v %v", jobs, err)
+	b.runTaskReminders(now)
+	stop()
+	b.waitScheduler(50*time.Millisecond, time.Second)
+	if reminderDue() || jobDue() {
+		t.Fatalf("committed send still due: reminder %v, one-off %v", reminderDue(), jobDue())
 	}
 }
