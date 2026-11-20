@@ -245,7 +245,7 @@ flowchart LR
 **Goal:** the prompt carries the request, not the bot's own old reports, idle tools and silent members' states.
 **Exit:** a week of live replies where owner DM prompts are well under the 38k-token first-round average before Z, with no golden case failing that passed before.
 
-- [x] Drop the Google Workspace MCP server (I5). Done when: the VPS `mcp.json` has no google server (backup kept) and the next startup logs 0 MCP tools.
+- [x] Drop the Google Workspace MCP server (I5 and I6, now removed from `DECISIONS.md`). Done when: the VPS `mcp.json` has no google server (backup kept) and the next startup logs 0 MCP tools.
 - [x] Shorten the bot's own older lines; `chat_history` searches the window (Z1). Done when: `TestCompactOwn` and `TestOlderMessages` pass.
 - [x] States only for active people (Z2). Done when: `TestActiveKeys` passes and main and the golden harness use `router.ActiveKeys`.
 - [x] One place for each rule; reminder fixed (Z3). Done when: `go test ./...` passes and the golden set fails no case the baseline didn't.

@@ -786,7 +786,7 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 		keys = append(keys, handles[h])
 	}
 	// D7: with tools, Claude searches facts itself and sees only counts;
-	// without (CLI), every fact goes inline and FitPrompt trims to 128k.
+	// without (CLI), every fact goes inline and FitPrompt trims to fit (W2).
 	var facts map[string][]string
 	var counts map[string]int
 	var err error
