@@ -195,7 +195,7 @@ func (c *orClient) reply(ctx context.Context, system, prompt string, img *Image,
 		Model:     c.model,
 		Messages:  []orMessage{{Role: "system", Content: system}, {Role: "user", Content: user}},
 		Tools:     c.tools(tools),
-		MaxTokens: 16000,
+		MaxTokens: maxTokens(ctx),
 		Reasoning: map[string]any{"effort": orEffort(c.effort), "exclude": true},
 		Provider:  cheapestFirst,
 	}

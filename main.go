@@ -638,7 +638,7 @@ func (b *bot) onMessage(e *events.Message) {
 	full := router.FitPromptWith(system, router.Prompt{
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, ImageNote: imageNote, Now: time.Now(), Group: isGroup,
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
-	rctx := ctx
+	rctx := llm.WithMaxTokens(ctx, llm.ReplyMaxTokens) // X1
 	if image == nil {
 		sent := len(system) + len(full) + toolBytes
 		rctx = llm.WithPromptTokens(ctx, func(n int) { b.ratio.Observe(sent, n) })
@@ -663,14 +663,20 @@ func (b *bot) onMessage(e *events.Message) {
 		}
 		log.Printf("%s%s: draft hedged after %d web calls (%d characters)", what, chatKey, webCalls.Load(), len(parsed.Text))
 		var st2 llm.Stats
-		again, err := b.replyLLM().Reply(llm.WithStats(ctx, &st2), system, full+nudge, image, toolset)
+		again, err := b.replyLLM().Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st2), system, full+nudge, image, toolset)
 		b.account(what+chatKey, st2)
 		if err == nil && strings.TrimSpace(again) != "" {
 			parsed = router.ParseReply(again)
 		}
 	}
+	// X1: a reply with prompt markup (a dump of <people>, chat-template
+	// tokens) is dropped whole, its tags too: it can carry stored facts.
+	if router.Leaks(parsed.Text) {
+		log.Printf("reply %s: dropped, prompt markup in the draft (%d characters)", chatKey, len(parsed.Text))
+		return
+	}
 	b.applyTags(ctx, chatKey, line, handles, parsed, !b.replyLLM().SupportsTools())
-	reply = parsed.Text
+	reply = router.Polish(parsed.Text, router.Openers(history, router.RecentOpeners)) // X2
 	if reply == "" {
 		return
 	}
@@ -1358,13 +1364,19 @@ func (b *bot) composeJob(ctx context.Context, j store.Job, chat types.JID) (comp
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: req, Text: text, Now: time.Now(), Group: isGroup,
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
 	var st llm.Stats
-	reply, err := b.replyLLM().Reply(llm.WithStats(ctx, &st), system, full, nil, toolset)
+	reply, err := b.replyLLM().Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st), system, full, nil, toolset) // X1
 	b.account("scheduled "+chatKey, st)
 	if err != nil {
 		log.Printf("scheduler: job %d: compose: %v; brief as written", j.ID, err)
 		return composed{}, false
 	}
 	reply = strings.TrimSpace(router.ParseReply(reply).Text) // tags (persona) ignored here
+	// X1: prompt markup in a scheduled message: send the brief instead.
+	if router.Leaks(reply) {
+		log.Printf("scheduler: job %d: compose leaked prompt markup (%d characters); brief as written", j.ID, len(reply))
+		return composed{}, false
+	}
+	reply = router.Polish(reply, router.Openers(history, router.RecentOpeners)) // X2
 	if reply == "" {
 		log.Printf("scheduler: job %d: empty compose; brief as written", j.ID)
 		return composed{}, false

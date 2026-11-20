@@ -66,6 +66,7 @@ type result struct {
 	mentions []router.Mention // who the reply tags (L3)
 	calls    []string         // "tool {json input}"
 	retried  bool             // W5, W6: the draft hedged and was retried
+	leaked   bool             // X1: the draft had prompt markup (main.go drops it)
 	db       *store.Store
 }
 
@@ -209,6 +210,9 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 		}
 	}
 	r.raw, r.parsed = out, router.ParseReply(out)
+	// X1, X2: what main.go does before sending.
+	r.leaked = router.Leaks(r.parsed.Text)
+	r.parsed.Text = router.Polish(r.parsed.Text, router.Openers(hist, router.RecentOpeners))
 	dump(t.Name(), r.parsed.Text)
 	_, _, r.mentions = router.ResolveMentions(r.parsed.Text, handles, names, nil)
 	return r
@@ -354,6 +358,8 @@ var (
 func clean(r result) error {
 	t := r.parsed.Text
 	switch {
+	case r.leaked:
+		return fmt.Errorf("prompt markup in the draft (dropped by X1): %q", t)
 	case strings.TrimSpace(t) == "":
 		return fmt.Errorf("empty reply")
 	case strings.ContainsAny(t, "<>") && regexp.MustCompile(`</?(person|forget|memory|persona|alias)\b`).MatchString(t):
@@ -436,6 +442,41 @@ func cases() []golden {
 			}
 			if r.called("web_search") || r.called("read_page") {
 				return fmt.Errorf("searched for banter; calls: %v", r.calls)
+			}
+			return clean(r)
+		}},
+
+		{"plays along with a family legend instead of fact-checking it", func(t *testing.T, e env) result {
+			// X3: with web tools on, a family legend got "can't confirm" and a
+			// request for a record to check it against.
+			e.group = true
+			hist := []router.Line{
+				{Time: ts.Add(-3 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "fun fact my great-grandfather invented the bicycle bell"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Jane", SenderID: "jane", Text: "no way, sure he did"},
+			}
+			return e.ask(t, stranger, "@Bot daaamn thats crazy right", hist, nil)
+		}, func(r result) error {
+			t := strings.ToLower(r.parsed.Text)
+			if regexp.MustCompile(`\b(source|evidence|proof|record|can['’]?t confirm|couldn['’]?t confirm|verify)\b`).MatchString(t) {
+				return fmt.Errorf("fact-checked a family legend: %q", r.parsed.Text)
+			}
+			if r.called("web_search") || r.called("read_page") {
+				return fmt.Errorf("searched banter; calls: %v", r.calls)
+			}
+			return clean(r)
+		}},
+
+		{"answers a casual line in chat, not a report", func(t *testing.T, e env) result {
+			// X3: short casual lines got bulleted, sourced reports.
+			e.group = true
+			hist := []router.Line{
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Jim", SenderID: "jim", Text: "finally done with work for today, what a week"},
+			}
+			return e.ask(t, stranger, "@Bot im so tired lol", hist, nil)
+		}, func(r result) error {
+			t := r.parsed.Text
+			if regexp.MustCompile(`(?m)^\s*[-•]\s`).MatchString(t) || strings.Contains(t, "http") || utf8.RuneCountInString(t) > 400 {
+				return fmt.Errorf("report-style reply to a casual line: %q", t)
 			}
 			return clean(r)
 		}},
