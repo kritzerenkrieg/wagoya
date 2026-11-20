@@ -39,10 +39,11 @@ import (
 )
 
 type bot struct {
-	cfg    *config.Config
-	wa     *whatsmeow.Client
-	db     *store.Store
-	models atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
+	restart func() // L15: ends the process; systemd restarts it
+	cfg     *config.Config
+	wa      *whatsmeow.Client
+	db      *store.Store
+	models  atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
 	// Y1: !reasoning's effort per provider, loaded from and saved to
 	// settings; a provider without one runs at config.DefaultEffort.
 	// Guarded by modelsMu with the swap.
@@ -112,6 +113,10 @@ func main() {
 		log.Fatalf("open bot db: %v", err)
 	}
 	defer db.Close()
+	// L15: the zone every local time is read and shown in, set with !time;
+	// applied before anything else runs, so nothing sees it change.
+	time.Local = loadZone(ctx, db)
+	log.Printf("time zone %s (set with !time)", time.Local)
 	// K6: summaries written before the fix may hold per-prompt handles.
 	if n, err := db.RewriteSummaries(ctx, func(t string) string { return router.StripHandles(t, nil) }); err != nil {
 		log.Printf("scrub summaries: %v", err)
@@ -145,6 +150,7 @@ func main() {
 	for _, k := range cfg.IgnoredKeys { // Y1
 		log.Printf("%s in .env is ignored: reasoning effort is set with !reasoning and stored in the database (default %s)", k, config.DefaultEffort)
 	}
+	b.restart = stop // L15: !time restarts to apply a new zone; systemd brings the bot back
 	b.loadEfforts(ctx)
 	b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), true))
 	// W1: our own web tools, for everyone. Set up even when the default
@@ -1527,6 +1533,43 @@ func effortOf(provider, e string) router.Effort {
 	return router.Effort{Set: e, Runs: llm.EffectiveEffort(provider, e)}
 }
 
+// zoneKey is the settings key of the !time zone, in seconds east of UTC (L15).
+const zoneKey = "utc_offset"
+
+// loadZone is the saved !time zone, or UTC if none is saved (L15).
+func loadZone(ctx context.Context, db *store.Store) *time.Location {
+	v, err := db.Setting(ctx, zoneKey)
+	if err != nil {
+		log.Printf("time zone: %v", err)
+	}
+	off, err := strconv.Atoi(v)
+	if err != nil {
+		off = 0
+	}
+	return time.FixedZone(router.ZoneName(off), off)
+}
+
+// timeCommand applies !time (L15): no argument shows the zone; an offset
+// saves it, and restart says the bot must restart to apply it.
+func (b *bot) timeCommand(ctx context.Context, args []string) (reply string, restart bool) {
+	if len(args) == 0 {
+		return router.TimeText(time.Now(), ""), false
+	}
+	off, ok := router.ParseUTCOffset(strings.Join(args, ""))
+	if !ok {
+		return router.TimeText(time.Now(), fmt.Sprintf("Unknown offset %q.", strings.Join(args, " "))), false
+	}
+	zone := router.ZoneName(off)
+	if _, cur := time.Now().Zone(); cur == off {
+		return "Already on " + zone + ".", false
+	}
+	if err := b.db.SetSetting(ctx, zoneKey, strconv.Itoa(off)); err != nil {
+		log.Printf("time zone: save: %v", err)
+		return "Couldn't save the time zone; nothing changed.", false
+	}
+	return router.TimeSet(zone), true
+}
+
 // effortKey is the settings key of a provider's !reasoning level (Y1).
 func effortKey(provider string) string { return "effort:" + provider }
 
@@ -1913,6 +1956,13 @@ func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command
 		b.send(ctx, chat, b.reasoningCommand(ctx, cmd.Args), e)
 	case "web":
 		b.send(ctx, chat, b.webCommand(cmd.Args), e)
+	case "time":
+		reply, restart := b.timeCommand(ctx, cmd.Args)
+		b.send(ctx, chat, reply, e)
+		if restart && b.restart != nil {
+			log.Print("time zone changed: restarting")
+			b.restart()
+		}
 	case "help":
 		b.send(ctx, chat, router.HelpText, e)
 	}

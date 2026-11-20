@@ -204,3 +204,40 @@ func TestRecentImage(t *testing.T) {
 		t.Fatalf("stale photos kept: %d", len(b.recentImg))
 	}
 }
+
+// L15: !time shows the zone, saves a new offset (UTC when none is saved) and
+// asks for a restart only when it changed.
+func TestTimeCommand(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if z := loadZone(ctx, db); z.String() != "UTC" {
+		t.Fatalf("default zone %s, want UTC", z)
+	}
+	old := time.Local
+	defer func() { time.Local = old }()
+	time.Local = time.UTC
+	b := &bot{db: db}
+	for _, tc := range []struct {
+		args    []string
+		want    string
+		restart bool
+	}{
+		{nil, "Time zone: *UTC*", false},
+		{[]string{"Asia/Jakarta"}, `Unknown offset "Asia/Jakarta".`, false},
+		{[]string{"0"}, "Already on UTC.", false},
+		{[]string{"+", "7"}, "Time zone set to *UTC+7*", true},
+	} {
+		got, restart := b.timeCommand(ctx, tc.args)
+		if !strings.Contains(got, tc.want) || restart != tc.restart {
+			t.Errorf("%v: %q (restart %v), want %q (restart %v)", tc.args, got, restart, tc.want, tc.restart)
+		}
+	}
+	z := loadZone(ctx, db) // what the restart loads
+	if _, off := time.Date(2026, 11, 20, 12, 0, 0, 0, z).Zone(); z.String() != "UTC+7" || off != 7*3600 {
+		t.Fatalf("after restart: %s %d", z, off)
+	}
+}
