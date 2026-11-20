@@ -348,7 +348,7 @@ CLI mode (`CLAUDE_CODE_OAUTH_TOKEN`) has no custom tools: memory goes through hi
 
 | Part | Built by | Size | Changes |
 |---|---|---|---|
-| System prompt: rules + persona | `router.SystemPrompt` | ~2.0k tokens + persona | Only on a persona change |
+| System prompt: rules (grouped, X3) + persona | `router.SystemPrompt` | ~2.8k tokens + persona | Only on a persona change |
 | Tool definitions | `memtools`, `tools`, `mcp` | ~1.5k (non-owner) to ~2.0k (owner) tokens | Owner vs non-owner turn |
 | `<chat>` | | tiny | Never within a chat |
 | `<summary>` (J8, K6) | curator | ≤300 words | Each curator pass |
@@ -357,7 +357,10 @@ CLI mode (`CLAUDE_CODE_OAUTH_TOKEN`) has no custom tools: memory goes through hi
 | `<memories>`: top `MEMORY_RESULTS` by FTS on the request | `store.SearchMemories` | small | Every request |
 | `<reminders>` (N3) | `store.ListJobs` | 0–5 lines | Time left changes every minute |
 | `<now>` | | tiny | Every minute |
+| `<reminder>` (X4): the key rules again, plus the bot's last 3 openers | `router.BuildPrompt` | ~200 tokens | With each bot reply |
 | `<request from=… id=…>` | | capped | Every request |
+
+Before a reply is sent, `router.Leaks` drops one that contains prompt markup (X1) and `router.Polish` cuts a stock filler or a repeated leading "..." from its start (X2). Replies and scheduled runs stop at 8,000 output tokens (`llm.ReplyMaxTokens`); other calls keep 16,000.
 
 Everything up to the end of `<transcript>` is the same from one request to the next in a chat until a curator pass or a block eviction, so the provider can serve it from cache.
 

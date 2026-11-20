@@ -42,3 +42,26 @@ func statsFrom(ctx context.Context) *Stats {
 	s, _ := ctx.Value(statsKey{}).(*Stats)
 	return s
 }
+
+// DefaultMaxTokens is each model call's output limit unless the request
+// sets its own with WithMaxTokens.
+const DefaultMaxTokens = 16000
+
+// ReplyMaxTokens is a chat reply's output limit (X1): normal replies use
+// under 4,500 tokens, thinking included; a runaway one (a prompt dump on a
+// weak model) stops here instead of at 16,000.
+const ReplyMaxTokens = 8000
+
+type maxTokensKey struct{}
+
+// WithMaxTokens returns a context whose model calls stop after n output tokens.
+func WithMaxTokens(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, maxTokensKey{}, n)
+}
+
+func maxTokens(ctx context.Context) int {
+	if n, ok := ctx.Value(maxTokensKey{}).(int); ok && n > 0 {
+		return n
+	}
+	return DefaultMaxTokens
+}

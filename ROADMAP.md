@@ -221,6 +221,17 @@ flowchart LR
 - [ ] Deep web search, switchable backend (W8). Done when: `TestDeepSearchBuiltin`, `TestDeepSearchFallbacks`, `TestClampRawTokens`, `TestResearcher` and `TestWebCommand` pass; and live, `!web` lists both backends, a search logs a `research digest` line under the raw budget, and `!web openrouter` logs `research search digest`.
 - [ ] Say "Searching..." during a deep search (W9). Done when: live, a question that needs a search gets `Searching...` quoting it, then the answer quoting it too, and a chat question without a search gets no notice.
 
+## Phase X: Rule adherence
+
+**Goal:** replies follow the rules in long prompts: no leaked prompt, no stock fillers, banter played along with, chat-sized answers.
+**Exit:** a week of live replies with no leak, no "Noted." opener, and short casual lines answered without bullets or sources.
+
+- [x] Drop leaking replies; reply output cap (X1). Done when: `TestLeaks` and `TestMaxTokens` pass and main drops a leaking reply before tags and sending.
+- [x] Filler openers fixed in code (X2). Done when: `TestPolish` and `TestOpeners` pass and the golden harness polishes replies like main.
+- [x] Grouped rules with precedence (X3). Done when: the golden cases "plays along with a family legend instead of fact-checking it" and "answers a casual line in chat, not a report" pass, and the rest of the golden set fails no case the baseline didn't.
+- [x] Reminder next to the request (X4). Done when: `TestPromptReminder` passes.
+- [ ] Live check (X1-X4). Done when: the Phase X exit check passes.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**
