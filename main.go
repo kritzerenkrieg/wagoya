@@ -537,7 +537,7 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	if !isGroup && qName == "" && qText == "" && qImg == nil {
 		// F4: an unquoted DM right after the bot's message answers that message.
-		if q, ok := router.ImplicitQuote(history); ok {
+		if q, ok := router.ImplicitQuote(history, e.Info.Timestamp); ok {
 			prompt = router.WithQuote(d.Prompt, b.cfg.BotName, q, 4000)
 		}
 	}
