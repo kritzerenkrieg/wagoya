@@ -319,6 +319,10 @@ func TestSchedulerShutdownCutsPendingSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	daily, err := db.AddJob(ctx, store.Job{Chat: "123@g.us", CreatedBy: "ann", Text: "water the plants", NextAt: now.Add(-time.Minute), Repeat: "daily"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	newBot := func() (*bot, context.CancelFunc) {
 		quit, stop := context.WithCancel(ctx)
 		b := &bot{db: db, quit: quit, schedBusy: make(chan struct{}, 1), wlLID: map[string]bool{},
@@ -327,11 +331,14 @@ func TestSchedulerShutdownCutsPendingSend(t *testing.T) {
 		return b, stop
 	}
 	reminderDue := func() bool { due, _ := db.TodoRemindersDue(ctx, now); return len(due) == 1 }
-	jobDue := func() bool { jobs, _ := db.DueJobs(ctx, now); return len(jobs) == 1 && jobs[0].ID == oneOff }
+	jobDue := func() bool { // both jobs still due, untouched
+		jobs, _ := db.DueJobs(ctx, now)
+		return len(jobs) == 2 && jobs[0].ID == oneOff && jobs[1].ID == daily
+	}
 
 	// Stuck before the commit (chat lock, composition, queue) past the wait.
 	b, stop := newBot()
-	pending := make(chan struct{}, 2)
+	pending := make(chan struct{}, 3)
 	b.deliver = func(ctx context.Context, _ store.Job, _ types.JID, commit func() bool) {
 		pending <- struct{}{}
 		<-ctx.Done() // the round's context ends with cut, like a composition
@@ -355,14 +362,33 @@ func TestSchedulerShutdownCutsPendingSend(t *testing.T) {
 		t.Fatalf("queued send cut off: id %q, committed %v %v", id, ok, committed)
 	}
 
-	// Committed: marked and removed, and not undone by a shutdown after.
+	// Committed, then stuck in the send itself past the wait: shutdown gives
+	// up, and it stays committed (at most once: never sent twice).
 	b, stop = newBot()
+	stuck := make(chan struct{})
+	defer close(stuck)
+	b.deliver = func(_ context.Context, _ store.Job, _ types.JID, commit func() bool) {
+		commit()
+		<-stuck
+	}
+	b.schedBusy <- struct{}{}
+	go func() { b.runTaskReminders(now); <-b.schedBusy }()
+	for reminderDue() {
+		time.Sleep(time.Millisecond)
+	}
+	stop()
+	start := time.Now()
+	b.waitScheduler(50*time.Millisecond, 50*time.Millisecond)
+	if d := time.Since(start); d > time.Second || reminderDue() {
+		t.Fatalf("shutdown waited %s; reminder due again %v", d, reminderDue())
+	}
+
+	// Committed: the one-off removed, the daily one moved to its next run.
+	b, _ = newBot()
 	b.deliver = func(_ context.Context, _ store.Job, _ types.JID, commit func() bool) { commit() }
 	b.runDue(now, 12*time.Hour, 30*time.Minute)
-	b.runTaskReminders(now)
-	stop()
-	b.waitScheduler(50*time.Millisecond, time.Second)
-	if reminderDue() || jobDue() {
-		t.Fatalf("committed send still due: reminder %v, one-off %v", reminderDue(), jobDue())
+	jobs, err := db.DueJobs(ctx, now.Add(48*time.Hour))
+	if err != nil || len(jobs) != 1 || jobs[0].ID != daily || !jobs[0].NextAt.After(now) {
+		t.Fatalf("after sending: want only the daily job, moved past now: %+v %v", jobs, err)
 	}
 }

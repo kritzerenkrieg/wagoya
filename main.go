@@ -1250,7 +1250,10 @@ func (b *bot) waitScheduler(max, grace time.Duration) {
 	select {
 	case b.schedBusy <- struct{}{}:
 	case <-time.After(grace):
-		log.Printf("shutdown: the scheduler didn't finish within %s more", grace)
+		// Only a send already committed can still run: WhatsApp is slow to
+		// take it. It stays committed (U3: at most once, so an uncertain
+		// delivery is never repeated); the log says which to check.
+		log.Printf("shutdown: a committed scheduled send still running after %s more; it may not have gone out (see the last \"scheduler:\" or \"task reminders:\" line)", grace)
 	}
 }
 
@@ -1334,9 +1337,11 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 		// Rescheduled or removed right before it goes out (sendCommit), so it
 		// goes out at most once, and one cut off by shutdown stays due.
 		advance := func() bool {
-			err := b.db.DeleteJob(ctx, j.ID)
-			if !next.IsZero() {
-				err = b.db.RescheduleJob(ctx, j.ID, next)
+			var err error
+			if next.IsZero() {
+				err = b.db.DeleteJob(ctx, j.ID) // a one-off, done
+			} else {
+				err = b.db.RescheduleJob(ctx, j.ID, next) // a recurring one: its next run
 			}
 			if err != nil {
 				log.Printf("scheduler: job %d: %v", j.ID, err)
