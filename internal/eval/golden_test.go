@@ -428,6 +428,25 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"a hello hours later doesn't pick the old topic back up", func(t *testing.T, e env) result {
+			// F4: "hey" 4h20m after a game-quote answer got "did the Butcher
+			// distract you?": it was sent as replying to that answer.
+			hist := []router.Line{
+				{Time: evalNow.Add(-262 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: `is the "Fresh meat!" quote from dota or diablo`},
+				{Time: evalNow.Add(-260 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: `Diablo first. The Butcher says "Fresh meat!" in Diablo I, and Pudge in Dota 2 borrows it.`},
+			}
+			text := "hey"
+			if q, ok := router.ImplicitQuote(hist, evalNow); ok { // as main does
+				text = router.WithQuote(text, "Bot", q, 4000)
+			}
+			return e.ask(t, owner, text, hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`(?i)butcher|diablo|dota|pudge|fresh meat`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("brought the old topic back: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"plays along with a joke instead of asking for a source", func(t *testing.T, e env) result {
 			// D8: "i am a changed man" got "bring a source with your next question".
 			e.group = true

@@ -213,21 +213,50 @@ func TestWithQuote(t *testing.T) {
 	}
 }
 
-// F4: an unquoted DM answers the bot's message only when it came right before.
+// F4: an unquoted DM answers the bot's message only when it came right
+// before, and not long before.
 func TestImplicitQuote(t *testing.T) {
-	ask := Line{SenderName: "Bot", FromBot: true, Text: "Which spelling, A or B?"}
-	user := Line{SenderName: "John", Text: "what clan is this"}
-	if q, ok := ImplicitQuote([]Line{user, ask}); !ok || q != ask.Text {
+	t0 := time.Date(2026, 11, 20, 16, 10, 0, 0, time.UTC)
+	ask := Line{Time: t0, SenderName: "Bot", FromBot: true, Text: "Which spelling, A or B?"}
+	user := Line{Time: t0, SenderName: "John", Text: "what clan is this"}
+	if q, ok := ImplicitQuote([]Line{user, ask}, t0.Add(ImplicitQuoteWindow)); !ok || q != ask.Text {
 		t.Fatalf("after the bot's question: got %q, %v", q, ok)
 	}
-	if _, ok := ImplicitQuote([]Line{ask, user}); ok {
+	if _, ok := ImplicitQuote([]Line{user, ask}, t0.Add(4*time.Hour)); ok {
+		t.Fatal("quoted the bot's message from hours ago")
+	}
+	if _, ok := ImplicitQuote([]Line{ask, user}, t0); ok {
 		t.Fatal("quoted the bot although the user spoke last")
 	}
-	if _, ok := ImplicitQuote(nil); ok {
+	if _, ok := ImplicitQuote(nil, t0); ok {
 		t.Fatal("quoted something in an empty chat")
 	}
-	if _, ok := ImplicitQuote([]Line{{FromBot: true, Text: "  "}}); ok {
+	if _, ok := ImplicitQuote([]Line{{Time: t0, FromBot: true, Text: "  "}}, t0); ok {
 		t.Fatal("quoted an empty bot line")
+	}
+}
+
+// F4: <now> says how long since the last line, once it's an hour or more.
+func TestGapNote(t *testing.T) {
+	t0 := time.Date(2026, 11, 20, 16, 10, 0, 0, time.UTC)
+	hist := []Line{{Time: t0, SenderName: "Bot", FromBot: true, Text: "Diablo first."}}
+	for _, tc := range []struct {
+		after time.Duration
+		want  string
+	}{
+		{59 * time.Minute, ""},
+		{time.Hour, "; 1h since the last transcript line"},
+		{4*time.Hour + 20*time.Minute, "; 4h20m since the last transcript line"},
+		{3*24*time.Hour + time.Hour, "; 3 days since the last transcript line"},
+	} {
+		p := BuildPrompt(Prompt{History: hist, Now: t0.Add(tc.after), Text: "hey"})
+		now := p[strings.Index(p, "<now>"):strings.Index(p, "</now>")]
+		if tc.want == "" && strings.Contains(now, "since the last") || tc.want != "" && !strings.HasSuffix(now, tc.want) {
+			t.Errorf("after %v: %q, want %q", tc.after, now, tc.want)
+		}
+	}
+	if p := BuildPrompt(Prompt{Now: t0, Text: "hey"}); strings.Contains(p, "since the last") {
+		t.Error("gap note in an empty chat")
 	}
 }
 

@@ -90,7 +90,11 @@ func BuildPrompt(p Prompt) string {
 		b.WriteString("</reminders>\n\n")
 	}
 	if !p.Now.IsZero() {
-		fmt.Fprintf(&b, "<now>%s</now>\n\n", p.Now.Format("Monday 2006-01-02 15:04 MST"))
+		now := p.Now.Format("Monday 2006-01-02 15:04 MST")
+		if g := gap(p.History, p.Now); g != "" { // F4
+			now += "; " + g + " since the last transcript line"
+		}
+		fmt.Fprintf(&b, "<now>%s</now>\n\n", now)
 	}
 	b.WriteString(reminder(Openers(p.History, RecentOpeners))) // X4: next to the request, where a long prompt keeps it
 	img := ""
@@ -195,19 +199,46 @@ func WithQuote(text, name, quote string, max int) string {
 	return q + " " + text
 }
 
+// ImplicitQuoteWindow is how recent the bot's last message must be for an
+// unquoted DM to answer it (F4): hours later, "hey" starts afresh.
+const ImplicitQuoteWindow = 30 * time.Minute
+
 // ImplicitQuote returns the bot's own message that a DM trigger answers when
-// it quotes nothing and comes right after that message (F4): a bare "ye"
-// answers the bot's last question, not something older. history is the
-// window before the trigger, oldest first.
-func ImplicitQuote(history []Line) (string, bool) {
+// it quotes nothing and comes right after that message, within
+// ImplicitQuoteWindow (F4): a bare "ye" answers the bot's last question, not
+// something older. history is the window before the trigger, oldest first;
+// at is the trigger's time.
+func ImplicitQuote(history []Line, at time.Time) (string, bool) {
 	if len(history) == 0 {
 		return "", false
 	}
 	last := history[len(history)-1]
-	if !last.FromBot || strings.TrimSpace(last.Text) == "" {
+	if !last.FromBot || strings.TrimSpace(last.Text) == "" || at.Sub(last.Time) > ImplicitQuoteWindow {
 		return "", false
 	}
 	return last.Text, true
+}
+
+// GapNote is the shortest pause since the last transcript line that <now>
+// points out (F4): after a break, a new message likely starts afresh.
+const GapNote = time.Hour
+
+// gap is "4h20m" or "3 days": the time since the last line, or "" when
+// shorter than GapNote.
+func gap(history []Line, now time.Time) string {
+	if len(history) == 0 || now.IsZero() {
+		return ""
+	}
+	d := now.Sub(history[len(history)-1].Time)
+	switch {
+	case d < GapNote:
+		return ""
+	case d >= 48*time.Hour:
+		return fmt.Sprintf("%d days", int(d.Hours()/24))
+	case d%time.Hour < time.Minute:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 // dayClock is t as "18:45 today", "07:00 tomorrow" or "Sat 2026-11-07 07:00".
