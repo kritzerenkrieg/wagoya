@@ -409,7 +409,7 @@ const historyLineRunes = 1200
 func (t *Turn) chatHistoryTool() llm.Tool {
 	return llm.Tool{
 		Name: "chat_history",
-		Description: "Search this chat's messages from the last 3 days, by words or a sender's name, including <transcript>, whose older lines of yours are shortened. " +
+		Description: "Search this chat's messages by words or a sender's name: <transcript> (your older lines there are shortened) and up to 3 days before it. " +
 			"query: words or a name; empty lists the messages just before <transcript>. page: 0 for the first results, 1 for the next.",
 		Schema: map[string]any{"type": "object", "properties": map[string]any{
 			"query": map[string]any{"type": "string"},
