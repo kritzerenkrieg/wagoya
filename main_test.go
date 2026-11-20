@@ -344,7 +344,7 @@ func TestSchedulerShutdownCutsPendingSend(t *testing.T) {
 		<-ctx.Done() // the round's context ends with cut, like a composition
 	}
 	b.schedBusy <- struct{}{}
-	go func() { b.runDue(now, 12*time.Hour, 30*time.Minute); b.runTaskReminders(now); <-b.schedBusy }()
+	go func(b *bot) { b.runDue(now, 12*time.Hour, 30*time.Minute); b.runTaskReminders(now); <-b.schedBusy }(b)
 	<-pending
 	stop()
 	b.waitScheduler(50*time.Millisecond, time.Second)
@@ -365,14 +365,14 @@ func TestSchedulerShutdownCutsPendingSend(t *testing.T) {
 	// Committed, then stuck in the send itself past the wait: shutdown gives
 	// up, and it stays committed (at most once: never sent twice).
 	b, stop = newBot()
-	stuck := make(chan struct{})
-	defer close(stuck)
+	stuck, worker := make(chan struct{}), make(chan struct{})
+	defer func() { close(stuck); <-worker }() // the worker ends before the database closes
 	b.deliver = func(_ context.Context, _ store.Job, _ types.JID, commit func() bool) {
 		commit()
 		<-stuck
 	}
 	b.schedBusy <- struct{}{}
-	go func() { b.runTaskReminders(now); <-b.schedBusy }()
+	go func(b *bot) { b.runTaskReminders(now); <-b.schedBusy; close(worker) }(b)
 	for reminderDue() {
 		time.Sleep(time.Millisecond)
 	}
