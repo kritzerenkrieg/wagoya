@@ -1578,15 +1578,16 @@ func (b *bot) reasoningCommand(args []string) string {
 	defer b.modelsMu.Unlock()
 	m := b.models.Load()
 	startup := b.cfg.Ready[m.provider].Effort
+	effort := func(e string) router.Effort { return router.Effort{Set: e, Runs: llm.EffectiveEffort(m.provider, e)} }
 	if len(args) == 0 {
-		return router.ReasoningText(m.provider, m.effort, startup, "")
+		return router.ReasoningText(m.provider, effort(m.effort), startup, "")
 	}
 	level := strings.ToLower(args[0])
 	switch {
 	case len(args) > 1 || !slices.Contains(router.Efforts, level):
-		return router.ReasoningText(m.provider, m.effort, startup, fmt.Sprintf("Unknown level %q.", strings.Join(args, " ")))
+		return router.ReasoningText(m.provider, effort(m.effort), startup, fmt.Sprintf("Unknown level %q.", strings.Join(args, " ")))
 	case level == m.effort:
-		return router.ReasoningText(m.provider, m.effort, startup, "Already at "+level+".")
+		return router.ReasoningText(m.provider, effort(m.effort), startup, "Already at "+level+".")
 	}
 	if b.effort == nil {
 		b.effort = map[string]string{}
@@ -1594,7 +1595,7 @@ func (b *bot) reasoningCommand(args []string) string {
 	b.effort[m.provider] = level
 	b.models.Store(newModels(b.cfg, m.provider, level, true))
 	log.Printf("reasoning on %s: %s -> %s (Y1)", m.provider, m.effort, level)
-	return router.ReasoningSet(m.provider, level, startup)
+	return router.ReasoningSet(m.provider, effort(level), startup)
 }
 
 // replyTimeout is how long one incoming message may take, model calls,

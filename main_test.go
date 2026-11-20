@@ -101,7 +101,7 @@ func TestReasoningCommand(t *testing.T) {
 		{[]string{"low", "x"}, `Unknown level "low x".`, "medium"},
 		{[]string{"medium"}, "Already at medium.", "medium"},
 		{[]string{"HIGH"}, "Reasoning on *anthropic* is now high", "high"},
-		{[]string{"none"}, "none (runs as low on Claude)", "none"},
+		{[]string{"none"}, "none (runs as low)", "none"},
 	} {
 		if got := b.reasoningCommand(tc.args); !strings.Contains(got, tc.want) {
 			t.Errorf("%v: %q, want %q", tc.args, got, tc.want)

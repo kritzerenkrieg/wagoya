@@ -107,20 +107,21 @@ func TestProviderText(t *testing.T) {
 
 // Y1: the effort shown, Claude's fallback for none, the default after a change.
 func TestReasoningText(t *testing.T) {
-	got := ReasoningText("anthropic", "none", "medium", `Unknown level "max".`)
-	for _, want := range []string{`Unknown level "max".`, "Reasoning on *anthropic*: none (runs as low on Claude) (default medium)", "Levels: none, low, medium, high", "Usage: !reasoning medium"} {
+	got := ReasoningText("anthropic", Effort{"none", "low"}, "medium", `Unknown level "max".`)
+	for _, want := range []string{`Unknown level "max".`, "Reasoning on *anthropic*: none (runs as low) (default medium)", "Levels: none, low, medium, high", "Usage: !reasoning medium"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	if got := ReasoningText("openrouter", "none", "none", ""); !strings.Contains(got, "*openrouter*: none\n") || strings.Contains(got, "default") {
+	if got := ReasoningText("openrouter", Effort{"none", "none"}, "none", ""); !strings.Contains(got, "*openrouter*: none\n") || strings.Contains(got, "default") {
 		t.Errorf("openrouter none: %s", got)
 	}
-	if got := ReasoningSet("openai", "high", "none"); !strings.Contains(got, "*openai* is now high") || !strings.Contains(got, "back to none") {
-		t.Errorf("set: %s", got)
+	// A .env value outside the levels shows what it really runs at.
+	if got := ReasoningText("openrouter", Effort{"xhigh", "high"}, "xhigh", ""); !strings.Contains(got, "*openrouter*: xhigh (runs as high)\n") {
+		t.Errorf("openrouter xhigh: %s", got)
 	}
-	if EffectiveEffort("anthropic", "none") != "low" || EffectiveEffort("openrouter", "none") != "none" || EffectiveEffort("anthropic", "high") != "high" {
-		t.Error("EffectiveEffort")
+	if got := ReasoningSet("openai", Effort{"high", "high"}, "none"); !strings.Contains(got, "*openai* is now high,") || !strings.Contains(got, "back to none") {
+		t.Errorf("set: %s", got)
 	}
 }
 

@@ -113,32 +113,28 @@ func ProviderText(active string, list []ProviderInfo, note string) string {
 // Efforts are the reasoning levels !reasoning takes (Y1).
 var Efforts = []string{"none", "low", "medium", "high"}
 
-// EffectiveEffort is what a provider really runs at for effort e (L13):
-// Claude has no "none", so it runs at "low".
-func EffectiveEffort(provider, e string) string {
-	if provider == "anthropic" && (e == "none" || e == "") {
-		return "low"
-	}
-	return e
-}
+// Effort is a provider's effort setting and what its client really runs at
+// (llm.EffectiveEffort): Claude has no "none" or "minimal", and OpenRouter
+// takes nothing above "high" (L13).
+type Effort struct{ Set, Runs string }
 
-// effortLabel is e as shown to the owner, with Claude's fallback spelled out.
-func effortLabel(provider, e string) string {
-	if eff := EffectiveEffort(provider, e); eff != e {
-		return e + " (runs as " + eff + " on Claude)"
+// String is the effort as shown to the owner, with any fallback spelled out.
+func (e Effort) String() string {
+	if e.Runs != "" && e.Runs != e.Set {
+		return e.Set + " (runs as " + e.Runs + ")"
 	}
-	return e
+	return e.Set
 }
 
 // ReasoningText is the !reasoning reply for no argument or a wrong one (Y1):
 // the active provider's effort, its startup default, and the usage.
-func ReasoningText(provider, effort, startup, note string) string {
+func ReasoningText(provider string, effort Effort, startup, note string) string {
 	var b strings.Builder
 	if note != "" {
 		b.WriteString(note + "\n\n")
 	}
-	fmt.Fprintf(&b, "Reasoning on *%s*: %s", provider, effortLabel(provider, effort))
-	if effort != startup {
+	fmt.Fprintf(&b, "Reasoning on *%s*: %s", provider, effort)
+	if effort.Set != startup {
 		fmt.Fprintf(&b, " (default %s)", startup)
 	}
 	b.WriteString("\n\nLevels: " + strings.Join(Efforts, ", ") + ". none turns reasoning off where the provider allows it; Claude runs it as low.")
@@ -147,8 +143,8 @@ func ReasoningText(provider, effort, startup, note string) string {
 }
 
 // ReasoningSet is the !reasoning reply after a change (Y1).
-func ReasoningSet(provider, effort, startup string) string {
-	return fmt.Sprintf("Reasoning on *%s* is now %s, for replies and the curator.\nIt goes back to %s (.env) on restart.", provider, effortLabel(provider, effort), startup)
+func ReasoningSet(provider string, effort Effort, startup string) string {
+	return fmt.Sprintf("Reasoning on *%s* is now %s, for replies and the curator.\nIt goes back to %s (.env) on restart.", provider, effort, startup)
 }
 
 // WebBackendInfo is one backend in the !web list (W8).

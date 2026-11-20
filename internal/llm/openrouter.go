@@ -158,6 +158,16 @@ func orEffort(e string) string {
 	return "low"
 }
 
+// EffectiveEffort is the effort a provider's client really runs at for
+// effort e (L13, Y1), with the mapping the clients use: Claude's for
+// anthropic, OpenRouter's for openrouter and openai.
+func EffectiveEffort(provider, e string) string {
+	if provider == "anthropic" {
+		return claudeEffort(e)
+	}
+	return orEffort(e)
+}
+
 func (c *orClient) tools(tools []Tool) []any {
 	var t []any
 	for _, tl := range tools {
