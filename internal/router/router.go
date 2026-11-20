@@ -141,6 +141,9 @@ type Prompt struct {
 	HasImage  bool
 	ImageNote string // F5: whose recent photo is attached, when it isn't the request's own
 	Group     bool   // a group chat, shown as <chat> (L3)
+	// KeepOwnLines skips Z1's shortening, for providers without chat_history
+	// (CLI mode), which couldn't read a shortened line back.
+	KeepOwnLines bool
 }
 
 // Categories allowed in memory tags (B12).

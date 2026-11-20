@@ -398,9 +398,40 @@ func (t *Turn) saveMemoryTool() llm.Tool {
 // historyPage is how many older messages chat_history returns per call (L9).
 const historyPage = 20
 
-// historyLineRunes caps one chat_history result: enough to read back the
-// bot's own reply that the transcript shortened (Z1).
+// historyLineRunes caps one chat_history result: enough to read back most
+// of a reply the transcript shortened (Z1).
 const historyLineRunes = 1200
+
+// excerpt is text cut to max runes around the first word of query it
+// contains, so a match past the cap is still shown; "…" marks a cut.
+func excerpt(text, query string, max int) string {
+	r := []rune(text)
+	if len(r) <= max {
+		return text
+	}
+	low := []rune(strings.ToLower(text)) // same length for nearly all text
+	at := -1
+	if len(low) == len(r) {
+		for _, w := range strings.Fields(strings.ToLower(query)) {
+			if i := strings.Index(string(low), w); i >= 0 {
+				at = utf8.RuneCountInString(string(low)[:i])
+				break
+			}
+		}
+	}
+	start := 0
+	if at > max/3 {
+		start = min(at-max/3, len(r)-max)
+	}
+	out := string(r[start : start+max])
+	if start > 0 {
+		out = "…" + out
+	}
+	if start+max < len(r) {
+		out += "…"
+	}
+	return out
+}
 
 // chatHistoryTool searches this chat's kept messages (store.MessageTTL, L9),
 // the window included, so the bot's own shortened lines (Z1) can be read in
@@ -444,10 +475,7 @@ func (t *Turn) chatHistoryTool() llm.Tool {
 				if l.FromBot {
 					who += " (you)"
 				}
-				text := strings.Join(strings.Fields(l.Text), " ")
-				if r := []rune(text); len(r) > historyLineRunes {
-					text = string(r[:historyLineRunes]) + "…"
-				}
+				text := excerpt(strings.Join(strings.Fields(l.Text), " "), in.Query, historyLineRunes)
 				fmt.Fprintf(&b, "[%s] %s: %s\n", l.Time.Format("2006-01-02 15:04"), who, text)
 			}
 			if len(lines) == historyPage {

@@ -125,7 +125,7 @@ const (
 )
 
 // shortNote ends a shortened bot line (Z1).
-const shortNote = " …(shortened; chat_history has it in full)"
+const shortNote = " …(shortened; search chat_history for its words to read more)"
 
 // compactOwn returns history with the bot's own lines older than its last
 // FullBotLines cut to about OldBotRunes, at a word boundary (Z1). history

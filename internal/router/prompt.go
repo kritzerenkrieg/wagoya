@@ -21,7 +21,11 @@ func BuildPrompt(p Prompt) string {
 		fmt.Fprintf(&b, "<summary>\n%s\n</summary>\n\n", clean(s))
 	}
 	b.WriteString("<transcript>\n")
-	for _, l := range compactOwn(p.History) { // Z1
+	history := p.History
+	if !p.KeepOwnLines {
+		history = compactOwn(history) // Z1
+	}
+	for _, l := range history {
 		b.WriteString(renderLine(l))
 	}
 	b.WriteString("</transcript>\n\n")

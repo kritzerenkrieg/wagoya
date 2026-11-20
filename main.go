@@ -646,6 +646,7 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	full := router.FitPromptWith(system, router.Prompt{
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, ImageNote: imageNote, Now: time.Now(), Group: isGroup,
+		KeepOwnLines: !b.replyLLM().SupportsTools(), // Z1: no chat_history to read them back
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
 	rctx := llm.WithMaxTokens(ctx, llm.ReplyMaxTokens) // X1
 	if image == nil {
@@ -1375,6 +1376,7 @@ func (b *bot) composeJob(ctx context.Context, j store.Job, chat types.JID) (comp
 	system := router.ScheduledSystemPrompt(b.cfg.BotName, persona, b.replyLLM().SupportsTools()) // Z4, Z10
 	full := router.FitPromptWith(system, router.Prompt{
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: req, Text: text, Now: time.Now(), Group: isGroup,
+		KeepOwnLines: !b.replyLLM().SupportsTools(), // Z1
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
 	var st llm.Stats
 	reply, err := b.replyLLM().Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st), system, full, nil, toolset) // X1

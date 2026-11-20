@@ -142,3 +142,15 @@ func TestActiveKeys(t *testing.T) {
 		t.Fatalf("ActiveKeys = %v", got)
 	}
 }
+
+// Z1: without chat_history (CLI mode) the bot's old lines stay whole.
+func TestKeepOwnLines(t *testing.T) {
+	long := strings.Repeat("word ", 100)
+	h := []Line{{FromBot: true, Text: long}, {FromBot: true, Text: "b"}, {FromBot: true, Text: "c"}}
+	if p := BuildPrompt(Prompt{History: h, KeepOwnLines: true}); strings.Contains(p, shortNote) {
+		t.Error("shortened a line with no chat_history to read it back")
+	}
+	if p := BuildPrompt(Prompt{History: h}); !strings.Contains(p, shortNote) {
+		t.Error("tool mode didn't shorten")
+	}
+}

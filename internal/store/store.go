@@ -198,7 +198,7 @@ func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, of
 		return nil, err // empty chat
 	}
 	score, args := "0", []any{}
-	for _, w := range queryWords(query) {
+	for _, w := range historyWords(query) {
 		pat := "%" + likeEscaper.Replace(w) + "%"
 		score += ` + (text LIKE ? ESCAPE '\') + (sender_name LIKE ? ESCAPE '\')`
 		args = append(args, pat, pat)
@@ -421,6 +421,31 @@ func queryWords(text string) []string {
 		if len(terms) == 24 {
 			break
 		}
+	}
+	return terms
+}
+
+// historyWords are a chat_history query's search terms: queryWords, but
+// two-rune words and names ("AI", "王伟") count too, and a query with no
+// such word is searched as a whole (Z1), so a non-empty query never falls
+// back to paging.
+func historyWords(query string) []string {
+	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	seen := map[string]bool{}
+	var terms []string
+	for _, w := range words {
+		if len([]rune(w)) < 2 || seen[w] || stopwords[w] {
+			continue
+		}
+		seen[w] = true
+		if terms = append(terms, w); len(terms) == 24 {
+			break
+		}
+	}
+	if q := strings.TrimSpace(strings.ToLower(query)); len(terms) == 0 && q != "" {
+		terms = []string{q}
 	}
 	return terms
 }
