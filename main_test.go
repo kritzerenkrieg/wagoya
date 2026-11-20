@@ -241,3 +241,54 @@ func TestTimeCommand(t *testing.T) {
 		t.Fatalf("after restart: %s %d", z, off)
 	}
 }
+
+// L15, U3: once shutdown starts the scheduler sends nothing new, a reminder
+// it skips stays unmarked for the next start, and shutdown waits for a round
+// in progress.
+func TestSchedulerShutdown(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.AddTodo(ctx, store.Todo{Owner: "ann", Name: "Report", Due: time.Now().Add(3 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	todos, err := db.ListTodos(ctx, "ann", "", "", "", 10)
+	if err != nil || len(todos) != 1 || todos[0].RemindAt().IsZero() {
+		t.Fatalf("task: %v %v", todos, err)
+	}
+	now := todos[0].RemindAt().Add(time.Minute) // its reminder is due
+	if due, err := db.TodoRemindersDue(ctx, now); err != nil || len(due) != 1 {
+		t.Fatalf("reminder not due: %v %v", due, err)
+	}
+	quit, stop := context.WithCancel(ctx)
+	b := &bot{db: db, quit: quit, schedBusy: make(chan struct{}, 1)}
+	stop()
+	b.runTaskReminders(now) // shutdown began: nothing is marked or sent
+	if due, err := db.TodoRemindersDue(ctx, now); err != nil || len(due) != 1 {
+		t.Fatalf("reminder lost on shutdown: %v %v", due, err)
+	}
+	b.schedBusy <- struct{}{} // a round in progress
+	waited := make(chan struct{})
+	go func() { b.waitScheduler(time.Minute); close(waited) }()
+	select {
+	case <-waited:
+		t.Fatal("shutdown didn't wait for the round")
+	case <-time.After(50 * time.Millisecond):
+	}
+	<-b.schedBusy // the round ends
+	select {
+	case <-waited:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown still waiting after the round ended")
+	}
+	done := make(chan struct{})
+	go func() { b.runScheduler(); close(done) }()
+	select {
+	case <-done: // no new round after shutdown
+	case <-time.After(time.Second):
+		t.Fatal("scheduler kept running after shutdown")
+	}
+}

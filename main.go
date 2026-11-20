@@ -39,11 +39,13 @@ import (
 )
 
 type bot struct {
-	restart func() // L15: shuts the bot down and starts it afresh
-	cfg     *config.Config
-	wa      *whatsmeow.Client
-	db      *store.Store
-	models  atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
+	restart   func()          // L15: shuts the bot down and starts it afresh
+	quit      context.Context // done once shutdown starts: the scheduler sends nothing new
+	schedBusy chan struct{}   // held while a scheduler round runs; shutdown waits for it
+	cfg       *config.Config
+	wa        *whatsmeow.Client
+	db        *store.Store
+	models    atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
 	// Y1: !reasoning's effort per provider, loaded from and saved to
 	// settings; a provider without one runs at config.DefaultEffort.
 	// Guarded by modelsMu with the swap.
@@ -155,6 +157,7 @@ func main() {
 		log.Printf("%s in .env is ignored: reasoning effort is set with !reasoning and stored in the database (default %s)", k, config.DefaultEffort)
 	}
 	b.restart = func() { reexec.Store(true); stop() } // L15: !time restarts to apply a new zone
+	b.quit, b.schedBusy = ctx, make(chan struct{}, 1)
 	b.loadEfforts(ctx)
 	b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), true))
 	// W1: our own web tools, for everyone. Set up even when the default
@@ -218,6 +221,7 @@ func main() {
 	}
 	<-ctx.Done()
 	log.Print("shutting down")
+	b.waitScheduler(2 * time.Minute)
 	b.wa.Disconnect()
 }
 
@@ -1183,11 +1187,37 @@ func (b *bot) runScheduler() {
 		repeatGrace = 30 * time.Minute
 	)
 	for {
+		select {
+		case b.schedBusy <- struct{}{}:
+		case <-b.quit.Done():
+			return
+		}
 		b.runDue(time.Now(), oneOffGrace, repeatGrace)
 		b.runTaskReminders(time.Now()) // U3
-		time.Sleep(tick)
+		<-b.schedBusy
+		select {
+		case <-time.After(tick):
+		case <-b.quit.Done():
+			return
+		}
 	}
 }
+
+// waitScheduler waits, up to max, for a scheduler round in progress to
+// finish its sends, and keeps a new one from starting, so shutdown doesn't
+// cut off a job or reminder already marked as sent. A round stops starting
+// new sends once shutdown begins, so it doesn't run long; what it skips stays
+// due for the next start.
+func (b *bot) waitScheduler(max time.Duration) {
+	select {
+	case b.schedBusy <- struct{}{}:
+	case <-time.After(max):
+		log.Printf("shutdown: a scheduled send still running after %s", max)
+	}
+}
+
+// stopping reports whether shutdown has begun (nil quit: never, in tests).
+func (b *bot) stopping() bool { return b.quit != nil && b.quit.Err() != nil }
 
 // runTaskReminders reminds owners of tasks coming due (U3). Code decides
 // when (store.Todo.RemindAt); the message is written now, like a scheduled
@@ -1202,6 +1232,9 @@ func (b *bot) runTaskReminders(now time.Time) {
 		return
 	}
 	for _, td := range due {
+		if b.stopping() {
+			return // still unmarked, so sent after the restart
+		}
 		// Marked first: a reminder goes out at most once per due time.
 		if err := b.db.MarkTodoReminded(ctx, td.ID, td.Due); err != nil {
 			log.Printf("task reminders: task %d: %v", td.ID, err)
@@ -1244,6 +1277,9 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 		return
 	}
 	for _, j := range jobs {
+		if b.stopping() {
+			return // still due, so sent after the restart (J10's grace)
+		}
 		send, next := memtools.DueAction(j, now, oneOffGrace, repeatGrace)
 		late := now.Sub(j.NextAt)
 		if !next.IsZero() {
