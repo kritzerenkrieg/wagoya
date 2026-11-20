@@ -396,7 +396,11 @@ func (s *Store) TodoRemindersDue(ctx context.Context, now time.Time) ([]Todo, er
 // MarkTodoReminded records that the reminder for task id's due time went
 // out, so it is sent once.
 func (s *Store) MarkTodoReminded(ctx context.Context, id int64, due time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE backlog SET reminded_due = ? WHERE id = ?`, due.Unix(), id)
+	at := int64(0) // zero: none sent, as a new task has
+	if !due.IsZero() {
+		at = due.Unix()
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE backlog SET reminded_due = ? WHERE id = ?`, at, id)
 	return err
 }
 

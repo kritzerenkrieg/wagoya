@@ -14,6 +14,7 @@ import (
 	"github.com/kritzerenkrieg/wagoya/internal/store"
 	"github.com/kritzerenkrieg/wagoya/internal/tools"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
 )
 
 // L1: !key saves, lists and removes keys, swaps the owner tool, and never
@@ -272,7 +273,7 @@ func TestSchedulerShutdown(t *testing.T) {
 	}
 	b.schedBusy <- struct{}{} // a round in progress
 	waited := make(chan struct{})
-	go func() { b.waitScheduler(time.Minute); close(waited) }()
+	go func() { b.waitScheduler(time.Minute, time.Second); close(waited) }()
 	select {
 	case <-waited:
 		t.Fatal("shutdown didn't wait for the round")
@@ -290,5 +291,73 @@ func TestSchedulerShutdown(t *testing.T) {
 	case <-done: // no new round after shutdown
 	case <-time.After(time.Second):
 		t.Fatal("scheduler kept running after shutdown")
+	}
+}
+
+// U3: a reminder still queued when shutdown stops waiting is cut off, and
+// its marker is undone so it goes out after the restart; it was never sent,
+// so it still goes out at most once.
+func TestSchedulerShutdownCutsQueuedSend(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const owner = "pn:15550001111"
+	if _, err := db.AddTodo(ctx, store.Todo{Owner: owner, Name: "Report", Due: time.Now().Add(3 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	todos, err := db.ListTodos(ctx, owner, "", "", "", 10)
+	if err != nil || len(todos) != 1 {
+		t.Fatalf("task: %v %v", todos, err)
+	}
+	now := todos[0].RemindAt().Add(time.Minute)
+	quit, stop := context.WithCancel(ctx)
+	b := &bot{db: db, quit: quit, schedBusy: make(chan struct{}, 1), wlLID: map[string]bool{},
+		cfg: &config.Config{WhitelistPN: map[string]bool{"15550001111": true}}}
+	b.cut, b.cutSends = context.WithCancel(ctx)
+	queued := make(chan struct{})
+	b.deliver = func(context.Context, store.Job, types.JID) bool { // stuck in the send queue
+		close(queued)
+		<-b.cut.Done()
+		return false
+	}
+	b.schedBusy <- struct{}{}
+	go func() { b.runTaskReminders(now); <-b.schedBusy }()
+	<-queued
+	if due, _ := db.TodoRemindersDue(ctx, now); len(due) != 0 {
+		t.Fatal("reminder not marked while it is being sent")
+	}
+	stop()
+	b.waitScheduler(50*time.Millisecond, time.Second)
+	if !b.cutOff() {
+		t.Fatal("shutdown didn't cut off the queued send")
+	}
+	if due, err := db.TodoRemindersDue(ctx, now); err != nil || len(due) != 1 {
+		t.Fatalf("cut-off reminder not due again after the restart: %v %v", due, err)
+	}
+}
+
+// J10: a one-off scheduled message cut off unsent by shutdown is put back,
+// so it goes out after the restart.
+func TestSchedulerShutdownKeepsOneOff(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "bot.db"), 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	if _, err := db.AddJob(ctx, store.Job{Chat: "123@g.us", CreatedBy: "ann", Text: "stand-up", NextAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	b := &bot{db: db, schedBusy: make(chan struct{}, 1)}
+	b.cut, b.cutSends = context.WithCancel(ctx)
+	b.deliver = func(context.Context, store.Job, types.JID) bool { b.cutSends(); return false }
+	b.runDue(now, 12*time.Hour, 30*time.Minute)
+	jobs, err := db.DueJobs(ctx, now)
+	if err != nil || len(jobs) != 1 || jobs[0].Text != "stand-up" {
+		t.Fatalf("cut-off one-off not put back: %v %v", jobs, err)
 	}
 }
