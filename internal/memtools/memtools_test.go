@@ -168,3 +168,22 @@ func TestSaveMemory(t *testing.T) {
 		t.Fatalf("memory not stored: %v", m)
 	}
 }
+
+// Z1: a long line is shown around the searched word, so a match past the
+// cap isn't cut off.
+func TestExcerpt(t *testing.T) {
+	text := strings.Repeat("a ", 1000) + "needle " + strings.Repeat("b ", 1000)
+	got := excerpt(text, "needle", 300)
+	if !strings.Contains(got, "needle") || !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") || len([]rune(got)) != 302 {
+		t.Fatalf("excerpt: %d runes, %q…", len([]rune(got)), got[:40])
+	}
+	if got := excerpt(text, "Needle?", 300); !strings.Contains(got, "needle") { // the search's own words
+		t.Fatalf("punctuated query: %q…", got[:40])
+	}
+	if got := excerpt(text, "", 300); !strings.HasPrefix(got, "a a") {
+		t.Fatalf("no query: %q", got[:20])
+	}
+	if excerpt("short", "x", 300) != "short" {
+		t.Fatal("short text changed")
+	}
+}

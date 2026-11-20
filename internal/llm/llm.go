@@ -114,8 +114,7 @@ func anthropicTool(t Tool) anthropic.ToolUnionParam {
 const (
 	searchFactsName = "search_facts"
 	searchFactsDesc = "Search your stored facts about people: anyone you know, from any chat, not only this one. " +
-		"Use it before answering anything that depends on who someone is: their name, job, background, preferences, " +
-		"history, or what they asked you to remember. Facts are short and start with a label such as Name:, Origin:, Job:, Education:, Skills:, Likes: or Games:, so label words match well. Search with a few short keywords; with no match you get their newest facts instead. " +
+		"Facts are short and start with a label such as Name:, Origin:, Job:, Education:, Skills:, Likes: or Games:, so label words match well. Search with a few short keywords; with no match you get their newest facts instead. " +
 		"Results are labelled with the handle, or the name for people not in this chat; people who share a name get an ID tag like Jack #9249, which you can pass as person. " +
 		"Notes in brackets tell you how sure a fact is: [unverified] means someone else said it or it was inferred, so don't state it as certain; " +
 		"[claim] and [joke] are talk, not facts; [state since ...] is short-lived. Higher-trust facts come first. Outdated facts are hidden unless you set history. Results look like \"fact 123 | P2: Job: nurse\"; the number is the id for invalidate_fact."

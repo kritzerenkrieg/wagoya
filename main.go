@@ -589,7 +589,8 @@ func (b *bot) onMessage(e *events.Message) {
 	if err != nil {
 		log.Printf("persona: %v", err)
 	}
-	system := router.SystemPrompt(b.cfg.BotName, persona, b.replyLLM().SupportsTools())
+	client := b.replyLLM() // one client per reply, so a !provider switch mid-turn changes nothing here
+	system := router.SystemPrompt(b.cfg.BotName, persona, client.SupportsTools())
 	handles := router.AssignHandles(history, &line)
 	var members map[string]member
 	if isGroup { // L5: members who haven't spoken get handles too
@@ -646,6 +647,7 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	full := router.FitPromptWith(system, router.Prompt{
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: line, Text: prompt, HasImage: image != nil, ImageNote: imageNote, Now: time.Now(), Group: isGroup,
+		KeepOwnLines: !client.SupportsTools(), // Z1: no chat_history to read them back
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
 	rctx := llm.WithMaxTokens(ctx, llm.ReplyMaxTokens) // X1
 	if image == nil {
@@ -653,7 +655,7 @@ func (b *bot) onMessage(e *events.Message) {
 		rctx = llm.WithPromptTokens(rctx, func(n int) { b.ratio.Observe(sent, n) })
 	}
 	var st llm.Stats // L4: what this reply cost
-	reply, err := b.replyLLM().Reply(llm.WithStats(rctx, &st), system, full, image, toolset)
+	reply, err := client.Reply(llm.WithStats(rctx, &st), system, full, image, toolset)
 	b.account("reply "+chatKey, st)
 	_ = b.wa.SendChatPresence(ctx, chat, types.ChatPresencePaused, types.ChatPresenceMediaText)
 	if err != nil {
@@ -673,7 +675,7 @@ func (b *bot) onMessage(e *events.Message) {
 		}
 		log.Printf("%s%s: draft hedged after %d web calls (%d characters)", what, chatKey, webCalls.Load(), len(parsed.Text))
 		var st2 llm.Stats
-		again, err := b.replyLLM().Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st2), system, full+nudge, image, toolset)
+		again, err := client.Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st2), system, full+nudge, image, toolset)
 		b.account(what+chatKey, st2)
 		if err == nil && strings.TrimSpace(again) != "" {
 			raw, parsed = again, router.ParseReply(again)
@@ -685,7 +687,7 @@ func (b *bot) onMessage(e *events.Message) {
 		log.Printf("reply %s: dropped, prompt markup in the draft (%d characters)", chatKey, len(raw))
 		return
 	}
-	b.applyTags(ctx, chatKey, line, handles, parsed, !b.replyLLM().SupportsTools())
+	b.applyTags(ctx, chatKey, line, handles, parsed, !client.SupportsTools())
 	reply = router.Polish(parsed.Text, router.Openers(history, router.RecentOpeners)) // X2
 	if reply == "" {
 		return
@@ -786,7 +788,7 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 		keys = append(keys, handles[h])
 	}
 	// D7: with tools, Claude searches facts itself and sees only counts;
-	// without (CLI), every fact goes inline and FitPrompt trims to 128k.
+	// without (CLI), every fact goes inline and FitPrompt trims to fit (W2).
 	var facts map[string][]string
 	var counts map[string]int
 	var err error
@@ -802,11 +804,14 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	if err != nil {
 		log.Printf("person facts: %v", err)
 	}
-	// K4: everyone's newest states go in every prompt, so a chat isn't stale
-	// about what another chat already knows (CLI mode has all facts inline).
+	// K4: the newest states of the requester and of everyone who spoke in
+	// the window go in every prompt, so a chat isn't stale about what another
+	// chat already knows (CLI mode has all facts inline). Z2: group members
+	// who haven't spoken are listed without states.
 	var states map[string][]store.Fact
 	if b.replyLLM().SupportsTools() {
-		if states, err = b.db.RecentStates(ctx, keys); err != nil {
+		active := router.ActiveKeys(handles, history, req)
+		if states, err = b.db.RecentStates(ctx, active); err != nil {
 			log.Printf("states: %v", err)
 		}
 	}
@@ -1369,12 +1374,15 @@ func (b *bot) composeJob(ctx context.Context, j store.Job, chat types.JID) (comp
 	if err != nil {
 		log.Printf("scheduler: persona: %v", err)
 	}
-	system := router.SystemPrompt(b.cfg.BotName, persona, true)
+	// One client for the prompt and the call.
+	client := b.replyLLM()
+	system := router.ScheduledSystemPrompt(b.cfg.BotName, persona, client.SupportsTools()) // Z4, Z10
 	full := router.FitPromptWith(system, router.Prompt{
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: req, Text: text, Now: time.Now(), Group: isGroup,
+		KeepOwnLines: !client.SupportsTools(), // Z1
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
 	var st llm.Stats
-	reply, err := b.replyLLM().Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st), system, full, nil, toolset) // X1
+	reply, err := client.Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st), system, full, nil, toolset) // X1
 	b.account("scheduled "+chatKey, st)
 	if err != nil {
 		log.Printf("scheduler: job %d: compose: %v; brief as written", j.ID, err)

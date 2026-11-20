@@ -38,17 +38,11 @@ func TestLeaks(t *testing.T) {
 // X2: stock fillers are cut, the reply's own words kept.
 func TestPolish(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
-		{"Noted. The meeting moved to Friday.", "The meeting moved to Friday."},
-		{"...Noted. The meeting moved to Friday.", "The meeting moved to Friday."},
-		{"...Fair. That one was my mistake.", "That one was my mistake."},
-		{"Understood. I'll keep it short.", "I'll keep it short."},
-		{"got it, see you at 7", "See you at 7"},
-		{"Noted.", ""},
-		{"...Noted. Fair.", ""},
-		{"Fair point, but no.", "Fair point, but no."}, // not a filler: no punctuation after "Fair"
-		{"Ok so here's the plan.", "Ok so here's the plan."},
-		{"Right, both are in Europe.", "Right, both are in Europe."}, // "Right" carries meaning
-		{"...Whatever.", "...Whatever."},                             // no recent "..." line
+		// Z12: fillers are the prompt's job; the persona may ask for them.
+		{"Noted. The meeting moved to Friday.", "Noted. The meeting moved to Friday."},
+		{"Noted.", "Noted."},
+		{"...Noted. Fair.", "...Noted. Fair."}, // no recent "..." line
+		{"...Whatever.", "...Whatever."},
 	} {
 		if got := Polish(c.in, nil); got != c.want {
 			t.Errorf("Polish(%q) = %q, want %q", c.in, got, c.want)
@@ -97,5 +91,60 @@ func TestPromptReminder(t *testing.T) {
 	}
 	if strings.Contains(BuildPrompt(Prompt{Text: "hi"}), "Your recent lines") {
 		t.Error("openers line without any bot lines")
+	}
+}
+
+// Z1: the bot's own lines older than its last two are shortened at a word
+// boundary; others' lines and its latest replies stay whole.
+func TestCompactOwn(t *testing.T) {
+	long := strings.Repeat("word ", 100) // 500 runes
+	h := []Line{
+		{FromBot: true, Text: long},            // 3rd from last bot line: cut
+		{SenderName: "Jim", Text: long},        // not the bot's: kept
+		{FromBot: true, Text: "short old one"}, // 3rd-oldest... short: kept
+		{FromBot: true, Text: long},            // 2nd from last: kept
+		{SenderName: "Jim", Text: "and?"},
+		{FromBot: true, Text: long}, // last: kept
+	}
+	got := compactOwn(h)
+	if h[0].Text != long {
+		t.Fatal("history itself was changed")
+	}
+	if !strings.HasSuffix(got[0].Text, shortNote) || len([]rune(got[0].Text)) > OldBotRunes+len([]rune(shortNote)) || strings.HasSuffix(strings.TrimSuffix(got[0].Text, shortNote), " wor") {
+		t.Errorf("old bot line: %q", got[0].Text)
+	}
+	for _, i := range []int{1, 2, 3, 5} {
+		if got[i].Text != h[i].Text {
+			t.Errorf("line %d changed: %q", i, got[i].Text)
+		}
+	}
+	if p := BuildPrompt(Prompt{History: h}); !strings.Contains(p, shortNote) || strings.Count(p, long) != 3 {
+		t.Errorf("prompt doesn't use the compacted window:\n%s", p)
+	}
+	short := []Line{{FromBot: true, Text: "a"}, {FromBot: true, Text: "b"}}
+	if out := compactOwn(short); &out[0] != &short[0] {
+		t.Error("copied a window with nothing to cut")
+	}
+}
+
+// Z2: states only for the requester and people who spoke in the window,
+// not for group members listed by L5 who haven't.
+func TestActiveKeys(t *testing.T) {
+	handles := map[string]string{"P1": "jim", "P2": "jane", "P3": "silent", "P4": "req"}
+	hist := []Line{{Handle: "P1"}, {Handle: "P2"}, {Handle: "P1"}, {FromBot: true}}
+	if got := ActiveKeys(handles, hist, Line{Handle: "P4"}); strings.Join(got, ",") != "req,jim,jane" {
+		t.Fatalf("ActiveKeys = %v", got)
+	}
+}
+
+// Z1: without chat_history (CLI mode) the bot's old lines stay whole.
+func TestKeepOwnLines(t *testing.T) {
+	long := strings.Repeat("word ", 100)
+	h := []Line{{FromBot: true, Text: long}, {FromBot: true, Text: "b"}, {FromBot: true, Text: "c"}}
+	if p := BuildPrompt(Prompt{History: h, KeepOwnLines: true}); strings.Contains(p, shortNote) {
+		t.Error("shortened a line with no chat_history to read it back")
+	}
+	if p := BuildPrompt(Prompt{History: h}); !strings.Contains(p, shortNote) {
+		t.Error("tool mode didn't shorten")
 	}
 }

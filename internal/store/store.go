@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -188,19 +189,25 @@ func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) erro
 	return err
 }
 
-// OlderMessages searches chat's messages from before the window (L9): those
-// matching the most words of query first, then newest; an empty query pages
-// back from the window. Results are oldest first.
+// OlderMessages searches chat's kept messages (L9): those matching the most
+// words of query first, then newest, the window included (Z1); an empty
+// query pages back from before the window. Results are oldest first.
 func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, offset int) ([]router.Line, error) {
 	start, err := s.windowStart(ctx, chat)
 	if err != nil || start == 0 {
 		return nil, err // empty chat
 	}
 	score, args := "0", []any{}
-	for _, w := range queryWords(query) {
+	for _, w := range HistoryWords(query) {
 		pat := "%" + likeEscaper.Replace(w) + "%"
 		score += ` + (text LIKE ? ESCAPE '\') + (sender_name LIKE ? ESCAPE '\')`
 		args = append(args, pat, pat)
+	}
+	// Z1: a word search covers the window too, since the bot's own older
+	// lines there are shortened in the prompt; paging back stays before it.
+	before := start
+	if len(args) > 0 {
+		before = math.MaxInt64
 	}
 	q := `SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM
 	        (SELECT *, ` + score + ` AS score FROM messages WHERE chat = ? AND id < ?)`
@@ -210,7 +217,7 @@ func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, of
 		q += ` ORDER BY id DESC`
 	}
 	q += ` LIMIT ? OFFSET ?`
-	args = append(args, chat, start, limit, offset)
+	args = append(args, chat, before, limit, offset)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -414,6 +421,31 @@ func queryWords(text string) []string {
 		if len(terms) == 24 {
 			break
 		}
+	}
+	return terms
+}
+
+// HistoryWords are a chat_history query's search terms: queryWords, but
+// two-rune words and names ("AI", "王伟") count too, and a query with no
+// such word is searched as a whole (Z1), so a non-empty query never falls
+// back to paging.
+func HistoryWords(query string) []string {
+	words := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	seen := map[string]bool{}
+	var terms []string
+	for _, w := range words {
+		if len([]rune(w)) < 2 || seen[w] || stopwords[w] {
+			continue
+		}
+		seen[w] = true
+		if terms = append(terms, w); len(terms) == 24 {
+			break
+		}
+	}
+	if q := strings.TrimSpace(strings.ToLower(query)); len(terms) == 0 && q != "" {
+		terms = []string{q}
 	}
 	return terms
 }

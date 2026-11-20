@@ -78,7 +78,7 @@ func (t *Turn) readProfileTool() llm.Tool {
 	return llm.Tool{
 		Name: "read_profile",
 		Description: "Read a person's profile: a prose picture of who they are, built up from everything they have said over time (character, background, relationships, interests, views, how they talk and how they treat you). " +
-			"Read it when your reply depends on who someone is: advice or opinions for them, personal questions, banter, talking about them, or matching how to talk to them. Not needed for plain lookups or small talk. For specific details use search_facts.",
+			"For specific details use search_facts.",
 		Schema: map[string]any{"type": "object", "required": []string{"person"}, "properties": map[string]any{
 			"person": map[string]any{"type": "string", "description": "A handle like P2, or a name for someone from another chat."},
 		}},
