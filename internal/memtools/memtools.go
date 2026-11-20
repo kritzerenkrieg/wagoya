@@ -412,7 +412,7 @@ func excerpt(text, query string, max int) string {
 	low := []rune(strings.ToLower(text)) // same length for nearly all text
 	at := -1
 	if len(low) == len(r) {
-		for _, w := range strings.Fields(strings.ToLower(query)) {
+		for _, w := range store.HistoryWords(query) { // the words the search matched
 			if i := strings.Index(string(low), w); i >= 0 {
 				at = utf8.RuneCountInString(string(low)[:i])
 				break

@@ -177,6 +177,9 @@ func TestExcerpt(t *testing.T) {
 	if !strings.Contains(got, "needle") || !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") || len([]rune(got)) != 302 {
 		t.Fatalf("excerpt: %d runes, %q…", len([]rune(got)), got[:40])
 	}
+	if got := excerpt(text, "Needle?", 300); !strings.Contains(got, "needle") { // the search's own words
+		t.Fatalf("punctuated query: %q…", got[:40])
+	}
 	if got := excerpt(text, "", 300); !strings.HasPrefix(got, "a a") {
 		t.Fatalf("no query: %q", got[:20])
 	}
