@@ -59,19 +59,19 @@ wagoya remembers people, not just conversations.
 - **Flood control:** someone who sends 10 messages in 2 minutes gets a one-word check by the model (spam or fast chat); spam earns a 5-minute timeout in every chat, and their messages are dropped before any model call. Model spend is capped at $2 a day; past it, only owners get answers.
 - **Ban-safe pacing:** all outgoing messages are globally spaced (default 1 every 3 s) and queued, never dropped.
 - **Web:** the bot's own `web_search` and `read_page` tools, backed by a local [open-webSearch](https://github.com/Aas-ee/open-webSearch) daemon (`WEBSEARCH_URL`, no API key). It searches before answering anything that rests on current or checkable facts instead of hedging.
-- **Owner commands:** handled by the bot itself, never stored or sent to the model. Commands start with `!` (so they don't clash with other bots' `/` commands). `!help` lists them. `!reset` clears the chat's transcript and summary for a fresh start (facts, memories and reminders stay). `!key` manages stored API keys, in a DM only. `!mute @person [30m]` and `!unmute @person` silence someone in every chat; `!mute` lists who is muted. `!budget` shows today's spend against the daily cap. `!provider` shows the model provider and `!provider anthropic` (or `openrouter`, `openai`) switches it until the next restart. `!web` shows the web search backend and `!web openrouter` (or `builtin`) switches it until the next restart. Commands from anyone else are ignored.
+- **Owner commands:** handled by the bot itself, never stored or sent to the model. Commands start with `!` (so they don't clash with other bots' `/` commands). `!help` lists them. `!reset` clears the chat's transcript and summary for a fresh start (facts, memories and reminders stay). `!key` manages stored API keys, in a DM only. `!mute @person [30m]` and `!unmute @person` silence someone in every chat; `!mute` lists who is muted. `!budget` shows today's spend against the daily cap. `!provider` shows the model provider and `!provider anthropic` (or `openrouter`, `openai`) switches it until the next restart. `!web` shows the web search backend and `!web openrouter` (or `builtin`) switches it until the next restart. `!reasoning` shows the active provider's reasoning effort and `!reasoning high` (or `none`, `low`, `medium`) sets it for that provider, saved in the database so it survives a restart; each provider keeps its own, every provider starts at `medium`, and `none` runs as `low` on Claude. Commands from anyone else are ignored.
 - **Prompt-injection hardening:** chat text, names and quotes are neutralised so they can't close or fake the prompt's sections. Owners are identified by WhatsApp ID, not by what a message claims.
 
 ### Model providers
 
 | Provider | Auth | Model keys | Notes |
 |---|---|---|---|
-| `anthropic` (default) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL`, `ANTHROPIC_EFFORT` | Claude Messages API with tool loop, image input |
+| `anthropic` (default) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` | Claude Messages API with tool loop, image input |
 | `anthropic` | `CLAUDE_CODE_OAUTH_TOKEN` | same | Claude Code CLI in headless mode (subscription), all local tools off |
-| `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL`, `OPENROUTER_EFFORT` | Any OpenRouter model (e.g. DeepSeek), image fallback for text-only models |
-| `openai` | `LLM_BASE_URL`, `LLM_API_KEY` | `LLM_MODEL`, `LLM_EFFORT` | Any OpenAI-compatible API (e.g. abliteration.ai) |
+| `openrouter` | `OPENROUTER_API_KEY` | `OPENROUTER_MODEL` | Any OpenRouter model (e.g. DeepSeek), image fallback for text-only models |
+| `openai` | `LLM_BASE_URL`, `LLM_API_KEY` | `LLM_MODEL` | Any OpenAI-compatible API (e.g. abliteration.ai) |
 
-`DEFAULT_PROVIDER` picks one at startup; owners can switch with `!provider <name>` in chat until the next restart.
+`DEFAULT_PROVIDER` picks one at startup; owners can switch with `!provider <name>` in chat until the next restart. Reasoning effort has no `.env` key: every provider starts at `medium`, and `!reasoning` changes it per provider and saves it.
 
 Each model call's input is capped at 96k tokens. Old transcript lines are trimmed first, then memories, then the request itself.
 
@@ -99,7 +99,7 @@ All settings live in `.env`; see [`.env.example`](.env.example) for every key. T
 | Key | Default | Meaning |
 |---|---|---|
 | `DEFAULT_PROVIDER` | `anthropic` | `anthropic`, `openrouter` or `openai`, at startup |
-| `*_MODEL`, `*_EFFORT` | per provider | Model ID and reasoning effort for each provider (see above) |
+| `*_MODEL` | per provider | Model ID for each provider (see above); reasoning effort is set with `!reasoning` |
 | `WHITELIST` | | Owner phone numbers, digits with country code, comma-separated (`6281234567890,628987654321`) |
 | `BOT_NAME` | `Claude` | Name used in prompts and mentions |
 | `HISTORY_LIMIT` | `64` | Recent messages per chat sent as context |

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/kritzerenkrieg/wagoya/internal/config"
 	"github.com/kritzerenkrieg/wagoya/internal/llm"
 	"github.com/kritzerenkrieg/wagoya/internal/router"
+	"github.com/kritzerenkrieg/wagoya/internal/store"
 	"github.com/kritzerenkrieg/wagoya/internal/tools"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 )
@@ -52,11 +54,11 @@ func TestKeyCommand(t *testing.T) {
 func TestProviderCommand(t *testing.T) {
 	cfg := &config.Config{Provider: "anthropic", AnthropicAPIKey: "a", OpenRouterKey: "k", DataDir: t.TempDir(),
 		Ready: map[string]config.ProviderConf{
-			"anthropic":  {Model: "claude-haiku-5-5", Effort: "low"},
-			"openrouter": {Model: "deepseek/deepseek-v4.1-flash-1017", Effort: "low"},
+			"anthropic":  {Model: "claude-haiku-5-5"},
+			"openrouter": {Model: "deepseek/deepseek-v4.1-flash-1017"},
 		}}
 	b := &bot{cfg: cfg}
-	b.models.Store(newModels(cfg, cfg.Provider, false))
+	b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), false))
 	for _, tc := range []struct {
 		args       []string
 		want, kept string
@@ -78,6 +80,75 @@ func TestProviderCommand(t *testing.T) {
 	}
 	if !b.replyLLM().SupportsTools() || b.curatorLLM() == nil {
 		t.Fatal("clients not swapped")
+	}
+}
+
+// Y1: !reasoning sets the active provider's effort only, saves it, and each
+// provider keeps its own across !provider switches and restarts; every
+// provider starts at medium.
+func TestReasoningCommand(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{Provider: "anthropic", AnthropicAPIKey: "a", OpenRouterKey: "k", DataDir: t.TempDir(),
+		Ready: map[string]config.ProviderConf{
+			"anthropic":  {Model: "claude-haiku-5-5"},
+			"openrouter": {Model: "deepseek/deepseek-v4.1-flash-1017"},
+			"openai":     {Model: "m"},
+		}}
+	path := filepath.Join(cfg.DataDir, "bot.db")
+	db, err := store.Open(path, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := func(db *store.Store) *bot { // what main does at startup
+		b := &bot{cfg: cfg, db: db}
+		b.loadEfforts(ctx)
+		b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), false))
+		return b
+	}
+	b := start(db)
+	effort := func() string { return b.models.Load().effort }
+	for _, tc := range []struct {
+		args       []string
+		want, kept string
+	}{
+		{nil, "Reasoning on *anthropic*: medium\n", "medium"},
+		{[]string{"max"}, `Unknown level "max".`, "medium"},
+		{[]string{"low", "x"}, `Unknown level "low x".`, "medium"},
+		{[]string{"medium"}, "Already at medium.", "medium"},
+		{[]string{"HIGH"}, "Reasoning on *anthropic* is now high", "high"},
+		{[]string{"none"}, "none (runs as low)", "none"},
+	} {
+		if got := b.reasoningCommand(ctx, tc.args); !strings.Contains(got, tc.want) {
+			t.Errorf("%v: %q, want %q", tc.args, got, tc.want)
+		}
+		if effort() != tc.kept {
+			t.Errorf("%v: effort %s, want %s", tc.args, effort(), tc.kept)
+		}
+	}
+	// Switching provider uses that provider's own effort, not anthropic's.
+	if got := b.providerCommand([]string{"openrouter"}); !strings.Contains(got, "effort medium") || effort() != "medium" {
+		t.Fatalf("openrouter took another provider's effort: %q, %s", got, effort())
+	}
+	b.reasoningCommand(ctx, []string{"high"})
+	if got := b.providerCommand([]string{"anthropic"}); !strings.Contains(got, "effort none (runs as low).") || effort() != "none" {
+		t.Fatalf("anthropic lost its own effort: %q, %s", got, effort())
+	}
+	if list := b.providerCommand(nil); !strings.Contains(list, "openrouter: deepseek/deepseek-v4.1-flash-1017, effort high") {
+		t.Errorf("list doesn't show openrouter's effort: %s", list)
+	}
+	// A restart keeps both saved levels; an unknown stored one is ignored.
+	if err := db.SetSetting(ctx, effortKey("openai"), "turbo"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db2, err := store.Open(path, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	b = start(db2)
+	if effort() != "none" || b.effortFor("openrouter") != "high" || b.effortFor("openai") != "medium" {
+		t.Fatalf("after restart: anthropic %s, openrouter %s, openai %s", effort(), b.effortFor("openrouter"), b.effortFor("openai"))
 	}
 }
 

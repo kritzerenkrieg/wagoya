@@ -15,10 +15,20 @@ import (
 // Providers is every model provider, in the order !provider lists them (L13).
 var Providers = []string{"anthropic", "openrouter", "openai"}
 
-// ProviderConf is one provider's model and effort (L13).
+// ProviderConf is one provider's model (L13). Its reasoning effort isn't
+// configured here: it is DefaultEffort until an owner sets it with
+// !reasoning, which is stored in SQLite (Y1).
 type ProviderConf struct {
-	Model, Effort string
+	Model string
 }
+
+// DefaultEffort is every provider's reasoning effort until !reasoning sets
+// one (Y1).
+const DefaultEffort = "medium"
+
+// RetiredEffortKeys were the per-provider effort keys before Y1; they are
+// ignored, and main logs any that are still set.
+var RetiredEffortKeys = []string{"ANTHROPIC_EFFORT", "OPENROUTER_EFFORT", "LLM_EFFORT"}
 
 type Config struct {
 	Provider string // DEFAULT_PROVIDER: "anthropic", "openrouter" (G1) or "openai" (G5)
@@ -35,8 +45,8 @@ type Config struct {
 	Trigger         string
 	PairNumber      string
 	BotName         string
-	Model           string // the default provider's (L13)
-	Effort          string
+	Model           string   // the default provider's (L13)
+	IgnoredKeys     []string // Y1: retired keys still set in the environment
 	HistoryLimit    int
 	MemoryResults   int
 	ContextTokens   int
@@ -203,22 +213,22 @@ func Load() (*Config, error) {
 	// credentials are set.
 	c.Ready = map[string]ProviderConf{}
 	if c.AnthropicAPIKey != "" || c.OAuthToken != "" {
-		c.Ready["anthropic"] = ProviderConf{get("ANTHROPIC_MODEL", "claude-haiku-5-5"), get("ANTHROPIC_EFFORT", "low")}
+		c.Ready["anthropic"] = ProviderConf{get("ANTHROPIC_MODEL", "claude-haiku-5-5")}
 	}
 	if c.OpenRouterKey != "" {
-		c.Ready["openrouter"] = ProviderConf{get("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017"), get("OPENROUTER_EFFORT", "low")}
+		c.Ready["openrouter"] = ProviderConf{get("OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash-1017")}
 	}
 	if c.LLMBaseURL != "" || c.LLMKey != "" { // G5: any OpenAI-compatible chat completions API
 		m := get("LLM_MODEL", "")
 		if c.LLMBaseURL == "" || c.LLMKey == "" || m == "" {
 			return nil, fmt.Errorf("the openai provider needs LLM_BASE_URL, LLM_API_KEY and LLM_MODEL")
 		}
-		c.Ready["openai"] = ProviderConf{m, get("LLM_EFFORT", "low")}
+		c.Ready["openai"] = ProviderConf{m}
 	}
 	pc, ok := c.Ready[c.Provider]
 	switch {
 	case ok:
-		c.Model, c.Effort = pc.Model, pc.Effort
+		c.Model = pc.Model
 	case c.Provider == "anthropic":
 		return nil, fmt.Errorf("set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN")
 	case c.Provider == "openrouter":
@@ -234,6 +244,11 @@ func Load() (*Config, error) {
 	default:
 		if c.OpenRouterKey != "" {
 			c.EmbedModel = m
+		}
+	}
+	for _, k := range RetiredEffortKeys {
+		if os.Getenv(k) != "" {
+			c.IgnoredKeys = append(c.IgnoredKeys, k)
 		}
 	}
 	return c, nil

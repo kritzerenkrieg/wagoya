@@ -11,11 +11,11 @@ import (
 // and never stored (L1, L2, M2, L12). Commands start with "!" (L12), so they
 // don't clash with other bots' "/" commands in the same group.
 type Command struct {
-	Name string   // "key", "reset", "mute", "unmute", "budget", "provider", "web" or "help"
+	Name string   // "key", "reset", "mute", "unmute", "budget", "provider", "reasoning", "web" or "help"
 	Args []string // the words after the name
 }
 
-// ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider, !web and !help as the
+// ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider, !reasoning, !web and !help as the
 // first word, after any leading @mentions ("@<BOT_NAME> !reset"). ok is false for
 // anything else, "/reset" included (L12).
 func ParseCommand(text string) (Command, bool) {
@@ -27,7 +27,7 @@ func ParseCommand(text string) (Command, bool) {
 		return Command{}, false
 	}
 	switch name := strings.ToLower(words[0]); name {
-	case "!key", "!reset", "!mute", "!unmute", "!budget", "!provider", "!web", "!help":
+	case "!key", "!reset", "!mute", "!unmute", "!budget", "!provider", "!reasoning", "!web", "!help":
 		return Command{Name: name[1:], Args: words[1:]}, true
 	}
 	return Command{}, false
@@ -72,6 +72,7 @@ const HelpText = "Owner commands:\n" +
 	"- !help: this list\n" +
 	"- !budget: today's spend against the daily cap\n" +
 	"- !provider [name]: show the model provider, or switch it (until restart)\n" +
+	"- !reasoning [none|low|medium|high]: show or set the active provider's reasoning effort (saved)\n" +
 	"- !web [builtin|openrouter]: show the web search backend, or switch it (until restart)\n" +
 	"- !reset: clear this chat's context (facts, memories and reminders are kept)\n" +
 	"- !mute @person [30m|2h|1d]: mute someone in every chat, until !unmute or for a while\n" +
@@ -82,7 +83,8 @@ const HelpText = "Owner commands:\n" +
 // ProviderInfo is one provider in the !provider list (L13). Model is empty
 // when its credentials aren't set.
 type ProviderInfo struct {
-	Name, Model, Effort string
+	Name, Model string
+	Effort      Effort // Y1: shown with what it really runs at
 }
 
 // ProviderText is the !provider reply for no argument or a wrong one (L13):
@@ -107,6 +109,43 @@ func ProviderText(active string, list []ProviderInfo, note string) string {
 	}
 	b.WriteString("\nUsage: !provider anthropic")
 	return b.String()
+}
+
+// Efforts are the reasoning levels !reasoning takes (Y1).
+var Efforts = []string{"none", "low", "medium", "high"}
+
+// Effort is a provider's effort setting and what its client really runs at
+// (llm.EffectiveEffort): Claude has no "none" or "minimal", and OpenRouter
+// takes nothing above "high" (L13).
+type Effort struct{ Set, Runs string }
+
+// String is the effort as shown to the owner, with any fallback spelled out.
+func (e Effort) String() string {
+	if e.Runs != "" && e.Runs != e.Set {
+		return e.Set + " (runs as " + e.Runs + ")"
+	}
+	return e.Set
+}
+
+// ReasoningText is the !reasoning reply for no argument or a wrong one (Y1):
+// the active provider's effort, the default if it differs, and the usage.
+func ReasoningText(provider string, effort Effort, def, note string) string {
+	var b strings.Builder
+	if note != "" {
+		b.WriteString(note + "\n\n")
+	}
+	fmt.Fprintf(&b, "Reasoning on *%s*: %s", provider, effort)
+	if effort.Set != def {
+		fmt.Fprintf(&b, " (default %s)", def)
+	}
+	b.WriteString("\n\nLevels: " + strings.Join(Efforts, ", ") + ". none turns reasoning off where the provider allows it; Claude runs it as low.")
+	b.WriteString("\nUsage: !reasoning medium")
+	return b.String()
+}
+
+// ReasoningSet is the !reasoning reply after a change (Y1).
+func ReasoningSet(provider string, effort Effort) string {
+	return fmt.Sprintf("Reasoning on *%s* is now %s, for replies and the curator.\nSaved: it stays after a restart.", provider, effort)
 }
 
 // WebBackendInfo is one backend in the !web list (W8).

@@ -9,5 +9,5 @@ cd "$(dirname "$0")/.."
 {
   git ls-files --cached --others --exclude-standard -z -- '*.go' go.mod go.sum | sort -zu |
     while IFS= read -r -d '' f; do [ -f "$f" ] && sha256sum "$f"; done
-  grep -E '^(DEFAULT_PROVIDER|[A-Z]+_MODEL|[A-Z]+_EFFORT|LLM_BASE_URL)=' .env 2>/dev/null || true
+  grep -E '^(DEFAULT_PROVIDER|[A-Z]+_MODEL|LLM_BASE_URL)=' .env 2>/dev/null || true # Y1: no effort keys; the golden set runs at the default
 } | sha256sum | cut -d' ' -f1

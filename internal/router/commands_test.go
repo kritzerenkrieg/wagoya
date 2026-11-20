@@ -19,6 +19,8 @@ func TestParseCommand(t *testing.T) {
 		"@Bot !help":                 "help|",
 		"!provider":                  "provider|",
 		"!Provider openrouter":       "provider|openrouter",
+		"!reasoning":                 "reasoning|",
+		"@Bot !Reasoning HIGH":       "reasoning|HIGH",
 		"/reset":                     "", // L12: "/" is other bots' prefix now
 		"/budget":                    "",
 		"!keys":                      "",
@@ -78,7 +80,7 @@ func TestBudgetText(t *testing.T) {
 
 // L12: !help lists every command, all with the "!" prefix.
 func TestHelpText(t *testing.T) {
-	for _, c := range []string{"!help", "!budget", "!provider", "!reset", "!mute", "!unmute", "!key"} {
+	for _, c := range []string{"!help", "!budget", "!provider", "!reasoning", "!reset", "!mute", "!unmute", "!key"} {
 		if !strings.Contains(HelpText, c) {
 			t.Errorf("help misses %s", c)
 		}
@@ -91,15 +93,35 @@ func TestHelpText(t *testing.T) {
 // L13: the list shows the active provider and which ones aren't set up.
 func TestProviderText(t *testing.T) {
 	got := ProviderText("openai", []ProviderInfo{
-		{Name: "anthropic", Model: "claude-haiku-5-5", Effort: "low"},
+		{Name: "anthropic", Model: "claude-haiku-5-5", Effort: Effort{"none", "low"}},
 		{Name: "openrouter"},
-		{Name: "openai", Model: "abliterated-model", Effort: "none"},
+		{Name: "openai", Model: "abliterated-model", Effort: Effort{"none", "none"}},
 	}, `Unknown provider "gpt".`)
-	for _, want := range []string{`Unknown provider "gpt".`, "Active provider: *openai*", "- anthropic: claude-haiku-5-5, effort low\n",
+	for _, want := range []string{`Unknown provider "gpt".`, "Active provider: *openai*", "- anthropic: claude-haiku-5-5, effort none (runs as low)\n",
 		"- openrouter: not set up", "- openai: abliterated-model, effort none (active)", "Usage: !provider anthropic"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
+	}
+}
+
+// Y1: the effort shown, Claude's fallback for none, the default after a change.
+func TestReasoningText(t *testing.T) {
+	got := ReasoningText("anthropic", Effort{"none", "low"}, "medium", `Unknown level "max".`)
+	for _, want := range []string{`Unknown level "max".`, "Reasoning on *anthropic*: none (runs as low) (default medium)", "Levels: none, low, medium, high", "Usage: !reasoning medium"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if got := ReasoningText("openrouter", Effort{"none", "none"}, "none", ""); !strings.Contains(got, "*openrouter*: none\n") || strings.Contains(got, "default") {
+		t.Errorf("openrouter none: %s", got)
+	}
+	// Any setting that runs differently shows what it really runs at.
+	if got := ReasoningText("openrouter", Effort{"xhigh", "high"}, "xhigh", ""); !strings.Contains(got, "*openrouter*: xhigh (runs as high)\n") {
+		t.Errorf("openrouter xhigh: %s", got)
+	}
+	if got := ReasoningSet("openai", Effort{"high", "high"}); !strings.Contains(got, "*openai* is now high,") || !strings.Contains(got, "stays after a restart") {
+		t.Errorf("set: %s", got)
 	}
 }
 

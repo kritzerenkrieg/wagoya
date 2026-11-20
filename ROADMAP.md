@@ -232,6 +232,14 @@ flowchart LR
 - [x] Reminder next to the request (X4). Done when: `TestPromptReminder` passes.
 - [ ] Live check (X1-X4). Done when: the Phase X exit check passes.
 
+## Phase Y: Reasoning command
+
+**Goal:** an owner changes a provider's reasoning effort from chat.
+**Exit:** live, `!reasoning high` changes the next reply's effort (the log line shows it); `!provider` to another provider and back keeps each one's own level; after a restart the level is still set, and a provider never set runs at `medium`.
+
+- [x] `!reasoning` per provider, saved in SQLite, default `medium`, no `.env` keys (Y1). Done when: `TestReasoningCommand` (switches, restart, unknown stored level), `TestReasoningText`, `TestProvider`, `TestParseCommand` and `TestHelpText` pass.
+- [ ] Live check (Y1). Done when: the Phase Y exit check passes.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

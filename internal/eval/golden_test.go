@@ -1504,14 +1504,15 @@ func TestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	effort := config.DefaultEffort // Y1: the effort every provider starts at
 	client := func(model string) llm.Client {
 		switch {
 		case cfg.Provider == "openrouter":
-			return llm.NewOpenRouter(cfg.OpenRouterKey, model, cfg.Effort)
+			return llm.NewOpenRouter(cfg.OpenRouterKey, model, effort)
 		case cfg.Provider == "openai":
-			return llm.NewOpenAICompat(cfg.LLMBaseURL, cfg.LLMKey, model, cfg.Effort)
+			return llm.NewOpenAICompat(cfg.LLMBaseURL, cfg.LLMKey, model, effort)
 		case cfg.AnthropicAPIKey != "":
-			return llm.NewAPI(cfg.AnthropicAPIKey, model, cfg.Effort)
+			return llm.NewAPI(cfg.AnthropicAPIKey, model, effort)
 		}
 		return nil
 	}
