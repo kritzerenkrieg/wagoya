@@ -116,11 +116,11 @@ func TestReasoningText(t *testing.T) {
 	if got := ReasoningText("openrouter", Effort{"none", "none"}, "none", ""); !strings.Contains(got, "*openrouter*: none\n") || strings.Contains(got, "default") {
 		t.Errorf("openrouter none: %s", got)
 	}
-	// A .env value outside the levels shows what it really runs at.
+	// Any setting that runs differently shows what it really runs at.
 	if got := ReasoningText("openrouter", Effort{"xhigh", "high"}, "xhigh", ""); !strings.Contains(got, "*openrouter*: xhigh (runs as high)\n") {
 		t.Errorf("openrouter xhigh: %s", got)
 	}
-	if got := ReasoningSet("openai", Effort{"high", "high"}, "none"); !strings.Contains(got, "*openai* is now high,") || !strings.Contains(got, "back to none") {
+	if got := ReasoningSet("openai", Effort{"high", "high"}); !strings.Contains(got, "*openai* is now high,") || !strings.Contains(got, "stays after a restart") {
 		t.Errorf("set: %s", got)
 	}
 }

@@ -43,8 +43,9 @@ type bot struct {
 	wa     *whatsmeow.Client
 	db     *store.Store
 	models atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
-	// Y1: !reasoning's effort per provider, until restart; a provider
-	// without one uses its .env effort. Guarded by modelsMu with the swap.
+	// Y1: !reasoning's effort per provider, loaded from and saved to
+	// settings; a provider without one runs at config.DefaultEffort.
+	// Guarded by modelsMu with the swap.
 	effort   map[string]string
 	modelsMu sync.Mutex
 	http     *llm.Tool  // I1: http_request, offered to everyone who can trigger the bot (I2)
@@ -141,7 +142,11 @@ func main() {
 	b := &bot{cfg: cfg, db: db, curIdle: map[string]*time.Timer{}, wlLID: map[string]bool{},
 		pacer: ratelimit.NewPacer(cfg.SendInterval), denyCool: ratelimit.NewCooldown(cfg.DenyCooldown),
 		flood: ratelimit.NewFlood(floodLimit, floodWindow), budgetNoted: map[string]string{}, recentImg: map[string]recentImage{}}
-	b.models.Store(newModels(cfg, cfg.Provider, cfg.Ready[cfg.Provider].Effort, true))
+	for _, k := range cfg.IgnoredKeys { // Y1
+		log.Printf("%s in .env is ignored: reasoning effort is set with !reasoning and stored in the database (default %s)", k, config.DefaultEffort)
+	}
+	b.loadEfforts(ctx)
+	b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), true))
 	// W1: our own web tools, for everyone. Set up even when the default
 	// provider has no tool calls, since !provider can switch to one that does
 	// (L13); promptBudget and the toolsets check SupportsTools per reply.
@@ -1499,13 +1504,34 @@ func newModels(cfg *config.Config, provider, effort string, announce bool) *mode
 		curator: newClient(cfg, provider, effort, false, false)}
 }
 
-// effortFor is the effort a provider runs at: !reasoning's, else .env's (Y1).
-// The caller holds modelsMu.
+// effortFor is the effort a provider runs at: its stored !reasoning level,
+// else config.DefaultEffort (Y1). The caller holds modelsMu.
 func (b *bot) effortFor(provider string) string {
 	if e, ok := b.effort[provider]; ok {
 		return e
 	}
-	return b.cfg.Ready[provider].Effort
+	return config.DefaultEffort
+}
+
+// effortKey is the settings key of a provider's !reasoning level (Y1).
+func effortKey(provider string) string { return "effort:" + provider }
+
+// loadEfforts reads every ready provider's stored !reasoning level (Y1). A
+// missing, unreadable or unknown one leaves it at config.DefaultEffort.
+func (b *bot) loadEfforts(ctx context.Context) {
+	b.effort = map[string]string{}
+	for name := range b.cfg.Ready {
+		v, err := b.db.Setting(ctx, effortKey(name))
+		switch {
+		case err != nil:
+			log.Printf("reasoning: load %s: %v", name, err)
+		case v == "":
+		case !slices.Contains(router.Efforts, v):
+			log.Printf("reasoning: ignoring stored level %q for %s", v, name)
+		default:
+			b.effort[name] = v
+		}
+	}
 }
 
 // replyLLM and curatorLLM are the active provider's clients (L13).
@@ -1522,20 +1548,19 @@ func newClient(cfg *config.Config, provider, effort string, web, announce bool) 
 		}
 	}
 	pc := cfg.Ready[provider]
-	pc.Effort = effort
 	switch {
 	case provider == "openrouter":
-		logf("model via OpenRouter, model %s, effort %s", pc.Model, pc.Effort)
-		return llm.NewOpenRouter(cfg.OpenRouterKey, pc.Model, pc.Effort)
+		logf("model via OpenRouter, model %s, effort %s", pc.Model, effort)
+		return llm.NewOpenRouter(cfg.OpenRouterKey, pc.Model, effort)
 	case provider == "openai":
-		logf("model via OpenAI-compatible API %s, model %s, effort %s", cfg.LLMBaseURL, pc.Model, pc.Effort)
-		return llm.NewOpenAICompat(cfg.LLMBaseURL, cfg.LLMKey, pc.Model, pc.Effort)
+		logf("model via OpenAI-compatible API %s, model %s, effort %s", cfg.LLMBaseURL, pc.Model, effort)
+		return llm.NewOpenAICompat(cfg.LLMBaseURL, cfg.LLMKey, pc.Model, effort)
 	case cfg.AnthropicAPIKey != "":
-		logf("Claude via Messages API, model %s, effort %s", pc.Model, pc.Effort)
-		return llm.NewAPI(cfg.AnthropicAPIKey, pc.Model, pc.Effort)
+		logf("Claude via Messages API, model %s, effort %s", pc.Model, effort)
+		return llm.NewAPI(cfg.AnthropicAPIKey, pc.Model, effort)
 	default:
-		logf("Claude via %s CLI (subscription token), model %s, effort %s", cfg.ClaudeBin, pc.Model, pc.Effort)
-		return llm.NewCLI(cfg.ClaudeBin, cfg.OAuthToken, pc.Model, pc.Effort, filepath.Join(cfg.DataDir, "claude-work"), web)
+		logf("Claude via %s CLI (subscription token), model %s, effort %s", cfg.ClaudeBin, pc.Model, effort)
+		return llm.NewCLI(cfg.ClaudeBin, cfg.OAuthToken, pc.Model, effort, filepath.Join(cfg.DataDir, "claude-work"), web)
 	}
 }
 
@@ -1570,24 +1595,28 @@ func (b *bot) providerCommand(args []string) string {
 	return fmt.Sprintf("Switched to *%s*: %s, effort %s.\nIt goes back to %s (DEFAULT_PROVIDER) on restart.", name, pc.Model, effort, b.cfg.Provider)
 }
 
-// reasoningCommand runs !reasoning (Y1): with a level it rebuilds the active
-// provider's reply and curator clients at that effort, until the next
-// restart; with none, or a wrong one, it shows the current effort.
-func (b *bot) reasoningCommand(args []string) string {
+// reasoningCommand runs !reasoning (Y1): with a level it saves it for the
+// active provider and rebuilds that provider's reply and curator clients at
+// it; with none, or a wrong one, it shows the current effort.
+func (b *bot) reasoningCommand(ctx context.Context, args []string) string {
 	b.modelsMu.Lock()
 	defer b.modelsMu.Unlock()
 	m := b.models.Load()
-	startup := b.cfg.Ready[m.provider].Effort
+	def := config.DefaultEffort
 	effort := func(e string) router.Effort { return router.Effort{Set: e, Runs: llm.EffectiveEffort(m.provider, e)} }
 	if len(args) == 0 {
-		return router.ReasoningText(m.provider, effort(m.effort), startup, "")
+		return router.ReasoningText(m.provider, effort(m.effort), def, "")
 	}
 	level := strings.ToLower(args[0])
 	switch {
 	case len(args) > 1 || !slices.Contains(router.Efforts, level):
-		return router.ReasoningText(m.provider, effort(m.effort), startup, fmt.Sprintf("Unknown level %q.", strings.Join(args, " ")))
+		return router.ReasoningText(m.provider, effort(m.effort), def, fmt.Sprintf("Unknown level %q.", strings.Join(args, " ")))
 	case level == m.effort:
-		return router.ReasoningText(m.provider, effort(m.effort), startup, "Already at "+level+".")
+		return router.ReasoningText(m.provider, effort(m.effort), def, "Already at "+level+".")
+	}
+	if err := b.db.SetSetting(ctx, effortKey(m.provider), level); err != nil {
+		log.Printf("reasoning: save %s: %v", m.provider, err)
+		return router.ReasoningText(m.provider, effort(m.effort), def, "Couldn't save "+level+", so nothing changed.")
 	}
 	if b.effort == nil {
 		b.effort = map[string]string{}
@@ -1595,7 +1624,7 @@ func (b *bot) reasoningCommand(args []string) string {
 	b.effort[m.provider] = level
 	b.models.Store(newModels(b.cfg, m.provider, level, true))
 	log.Printf("reasoning on %s: %s -> %s (Y1)", m.provider, m.effort, level)
-	return router.ReasoningSet(m.provider, effort(level), startup)
+	return router.ReasoningSet(m.provider, effort(level))
 }
 
 // replyTimeout is how long one incoming message may take, model calls,
@@ -1867,7 +1896,7 @@ func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command
 	case "provider":
 		b.send(ctx, chat, b.providerCommand(cmd.Args), e)
 	case "reasoning":
-		b.send(ctx, chat, b.reasoningCommand(cmd.Args), e)
+		b.send(ctx, chat, b.reasoningCommand(ctx, cmd.Args), e)
 	case "web":
 		b.send(ctx, chat, b.webCommand(cmd.Args), e)
 	case "help":

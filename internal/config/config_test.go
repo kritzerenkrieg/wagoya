@@ -30,7 +30,7 @@ func TestProvider(t *testing.T) {
 	}
 	t.Setenv("OPENROUTER_API_KEY", "k")
 	c, err := Load()
-	if err != nil || c.Provider != "openrouter" || c.Model != "deepseek/deepseek-v4.1-flash-1017" || c.Effort != "low" {
+	if err != nil || c.Provider != "openrouter" || c.Model != "deepseek/deepseek-v4.1-flash-1017" || len(c.IgnoredKeys) != 0 {
 		t.Fatalf("openrouter config: %+v %v", c, err)
 	}
 	if _, ok := c.Ready["anthropic"]; ok || len(c.Ready) != 1 {
@@ -41,8 +41,8 @@ func TestProvider(t *testing.T) {
 		t.Fatal("anthropic without key accepted")
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "a")
-	t.Setenv("ANTHROPIC_EFFORT", "medium")
-	if c, err = Load(); err != nil || c.Provider != "anthropic" || c.Model != "claude-haiku-5-5" || c.Effort != "medium" {
+	t.Setenv("ANTHROPIC_EFFORT", "medium") // Y1: retired, ignored and reported
+	if c, err = Load(); err != nil || c.Provider != "anthropic" || c.Model != "claude-haiku-5-5" || len(c.IgnoredKeys) != 1 || c.IgnoredKeys[0] != "ANTHROPIC_EFFORT" {
 		t.Fatalf("anthropic config: %+v %v", c, err)
 	}
 	t.Setenv("LLM_BASE_URL", "https://api.example.com/v1")
@@ -53,11 +53,11 @@ func TestProvider(t *testing.T) {
 	t.Setenv("LLM_MODEL", "m")
 	t.Setenv("LLM_EFFORT", "none")
 	t.Setenv("DEFAULT_PROVIDER", "OpenAI")
-	if c, err = Load(); err != nil || c.Provider != "openai" || c.Model != "m" || c.Effort != "none" || c.LLMBaseURL != "https://api.example.com/v1" {
+	if c, err = Load(); err != nil || c.Provider != "openai" || c.Model != "m" || len(c.IgnoredKeys) != 2 || c.LLMBaseURL != "https://api.example.com/v1" {
 		t.Fatalf("openai config: %+v %v", c, err)
 	}
 	// L13: every provider with credentials is ready to switch to.
-	if len(c.Ready) != 3 || c.Ready["anthropic"].Effort != "medium" || c.Ready["openrouter"].Model == "" {
+	if len(c.Ready) != 3 || c.Ready["anthropic"].Model == "" || c.Ready["openrouter"].Model == "" {
 		t.Fatalf("ready: %v", c.Ready)
 	}
 	t.Setenv("DEFAULT_PROVIDER", "gemini")

@@ -72,7 +72,7 @@ const HelpText = "Owner commands:\n" +
 	"- !help: this list\n" +
 	"- !budget: today's spend against the daily cap\n" +
 	"- !provider [name]: show the model provider, or switch it (until restart)\n" +
-	"- !reasoning [none|low|medium|high]: show or set the active provider's reasoning effort (until restart)\n" +
+	"- !reasoning [none|low|medium|high]: show or set the active provider's reasoning effort (saved)\n" +
 	"- !web [builtin|openrouter]: show the web search backend, or switch it (until restart)\n" +
 	"- !reset: clear this chat's context (facts, memories and reminders are kept)\n" +
 	"- !mute @person [30m|2h|1d]: mute someone in every chat, until !unmute or for a while\n" +
@@ -127,15 +127,15 @@ func (e Effort) String() string {
 }
 
 // ReasoningText is the !reasoning reply for no argument or a wrong one (Y1):
-// the active provider's effort, its startup default, and the usage.
-func ReasoningText(provider string, effort Effort, startup, note string) string {
+// the active provider's effort, the default if it differs, and the usage.
+func ReasoningText(provider string, effort Effort, def, note string) string {
 	var b strings.Builder
 	if note != "" {
 		b.WriteString(note + "\n\n")
 	}
 	fmt.Fprintf(&b, "Reasoning on *%s*: %s", provider, effort)
-	if effort.Set != startup {
-		fmt.Fprintf(&b, " (default %s)", startup)
+	if effort.Set != def {
+		fmt.Fprintf(&b, " (default %s)", def)
 	}
 	b.WriteString("\n\nLevels: " + strings.Join(Efforts, ", ") + ". none turns reasoning off where the provider allows it; Claude runs it as low.")
 	b.WriteString("\nUsage: !reasoning medium")
@@ -143,8 +143,8 @@ func ReasoningText(provider string, effort Effort, startup, note string) string 
 }
 
 // ReasoningSet is the !reasoning reply after a change (Y1).
-func ReasoningSet(provider string, effort Effort, startup string) string {
-	return fmt.Sprintf("Reasoning on *%s* is now %s, for replies and the curator.\nIt goes back to %s (.env) on restart.", provider, effort, startup)
+func ReasoningSet(provider string, effort Effort) string {
+	return fmt.Sprintf("Reasoning on *%s* is now %s, for replies and the curator.\nSaved: it stays after a restart.", provider, effort)
 }
 
 // WebBackendInfo is one backend in the !web list (W8).
