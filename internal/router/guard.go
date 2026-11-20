@@ -48,13 +48,22 @@ func Openers(history []Line, n int) []string {
 	return out
 }
 
-// opener is the first four words of s, on one line.
+// maxOpenerRunes bounds an opener, so text without spaces (CJK, a long
+// URL) isn't copied whole into every reminder.
+const maxOpenerRunes = 40
+
+// opener is the first four words of s, on one line, at most
+// maxOpenerRunes long.
 func opener(s string) string {
 	w := strings.Fields(s)
 	if len(w) > 4 {
 		w = w[:4]
 	}
-	return strings.Join(w, " ")
+	o := strings.Join(w, " ")
+	if r := []rune(o); len(r) > maxOpenerRunes {
+		o = string(r[:maxOpenerRunes])
+	}
+	return o
 }
 
 // Polish fixes a reply's opening in code (X2): a stock filler opener is

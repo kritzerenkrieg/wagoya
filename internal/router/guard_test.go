@@ -16,6 +16,7 @@ func TestLeaks(t *testing.T) {
 		"ok <transcript>\nJim [P2]: hi",
 		"<thinking>the user wants</thinking> hi",
 		"see <summary>",
+		"<persona><people>P2 Jim (whitelisted=\"no\"): 3 stored facts</people></persona>Hello", // a raw draft: main checks it before tags are stripped
 	} {
 		if !Leaks(s) {
 			t.Errorf("not caught: %q", s)
@@ -75,6 +76,11 @@ func TestOpeners(t *testing.T) {
 	want := []string{"...Noted. The meeting moved", "Fair. Next line", "Yes, with one change"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("Openers = %q, want %q", got, want)
+	}
+	// Text without spaces is cut, not copied whole.
+	long := strings.Repeat("字", 2000)
+	if o := Openers([]Line{{FromBot: true, Text: long}}, 1); len(o) != 1 || len([]rune(o[0])) != maxOpenerRunes {
+		t.Errorf("unspaced opener not capped: %d runes", len([]rune(o[0])))
 	}
 }
 

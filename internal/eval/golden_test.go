@@ -211,7 +211,7 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	}
 	r.raw, r.parsed = out, router.ParseReply(out)
 	// X1, X2: what main.go does before sending.
-	r.leaked = router.Leaks(r.parsed.Text)
+	r.leaked = router.Leaks(out)
 	r.parsed.Text = router.Polish(r.parsed.Text, router.Openers(hist, router.RecentOpeners))
 	dump(t.Name(), r.parsed.Text)
 	_, _, r.mentions = router.ResolveMentions(r.parsed.Text, handles, names, nil)

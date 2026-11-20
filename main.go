@@ -641,7 +641,7 @@ func (b *bot) onMessage(e *events.Message) {
 	rctx := llm.WithMaxTokens(ctx, llm.ReplyMaxTokens) // X1
 	if image == nil {
 		sent := len(system) + len(full) + toolBytes
-		rctx = llm.WithPromptTokens(ctx, func(n int) { b.ratio.Observe(sent, n) })
+		rctx = llm.WithPromptTokens(rctx, func(n int) { b.ratio.Observe(sent, n) })
 	}
 	var st llm.Stats // L4: what this reply cost
 	reply, err := b.replyLLM().Reply(llm.WithStats(rctx, &st), system, full, image, toolset)
@@ -652,7 +652,8 @@ func (b *bot) onMessage(e *events.Message) {
 		b.send(ctx, chat, "Sorry, I couldn't reach Claude right now.", e)
 		return
 	}
-	parsed := router.ParseReply(reply)
+	raw := reply // X1: the leak check reads the draft with its tags
+	parsed := router.ParseReply(raw)
 	// W5, W6: a draft that says it hasn't checked (no search) or didn't find
 	// something (a thin search) is dropped; one more call is told to search
 	// or dig first. At most one retry per reply.
@@ -666,13 +667,13 @@ func (b *bot) onMessage(e *events.Message) {
 		again, err := b.replyLLM().Reply(llm.WithStats(llm.WithMaxTokens(ctx, llm.ReplyMaxTokens), &st2), system, full+nudge, image, toolset)
 		b.account(what+chatKey, st2)
 		if err == nil && strings.TrimSpace(again) != "" {
-			parsed = router.ParseReply(again)
+			raw, parsed = again, router.ParseReply(again)
 		}
 	}
 	// X1: a reply with prompt markup (a dump of <people>, chat-template
 	// tokens) is dropped whole, its tags too: it can carry stored facts.
-	if router.Leaks(parsed.Text) {
-		log.Printf("reply %s: dropped, prompt markup in the draft (%d characters)", chatKey, len(parsed.Text))
+	if router.Leaks(raw) {
+		log.Printf("reply %s: dropped, prompt markup in the draft (%d characters)", chatKey, len(raw))
 		return
 	}
 	b.applyTags(ctx, chatKey, line, handles, parsed, !b.replyLLM().SupportsTools())
