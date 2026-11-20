@@ -10,13 +10,39 @@ import (
 // earlier sends section.
 func TestScheduledRequest(t *testing.T) {
 	r := ScheduledRequest("lunch nag for @P2", "daily", []string{"eat, @Mary!", "food time"})
-	for _, want := range []string{"lunch nag for @P2", "repeats daily", "- eat, @Mary!", "- food time", "Always write"} {
+	for _, want := range []string{"lunch nag for @P2", "repeats daily", "- eat, @Mary!", "- food time"} {
 		if !strings.Contains(r, want) {
 			t.Errorf("missing %q in %q", want, r)
 		}
 	}
 	if one := ScheduledRequest("futsal at 19:00", "", nil); strings.Contains(one, "repeats") || strings.Contains(one, "last runs") {
 		t.Errorf("one-off: %q", one)
+	}
+	// Z4: the instructions are in the system prompt, not the request.
+	if strings.Contains(r, "Always write") {
+		t.Errorf("instructions in the request: %q", r)
+	}
+}
+
+// Z4, Z10: a scheduled run's system prompt has the run's instructions, lifts
+// M5's silence, and names only the tools it gets; no memory or persona tags.
+func TestScheduledSystemPrompt(t *testing.T) {
+	s := ScheduledSystemPrompt("Bot", "", true)
+	for _, want := range []string{"Scheduled run.", "Always write it", "does not apply here", "search_facts", "chat_history", "- Web:"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	for _, bad := range []string{"save_fact", "invalidate_fact", "schedule_message", "add_task", "http_request", "<persona>the complete"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("names %q, which a scheduled run doesn't have", bad)
+		}
+	}
+	if cli := ScheduledSystemPrompt("Bot", "", false); strings.Contains(cli, "search_facts") || !strings.Contains(cli, "- Web:") {
+		t.Error("CLI scheduled run should name web only")
+	}
+	if strings.Contains(SystemPrompt("Bot", "", true), "Scheduled run.") {
+		t.Error("reply prompt has the scheduled section")
 	}
 }
 

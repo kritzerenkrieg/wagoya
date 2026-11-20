@@ -240,6 +240,19 @@ flowchart LR
 - [x] `!reasoning` per provider, saved in SQLite, default `medium`, no `.env` keys (Y1). Done when: `TestReasoningCommand` (switches, restart, unknown stored level), `TestReasoningText`, `TestProvider`, `TestParseCommand` and `TestHelpText` pass.
 - [ ] Live check (Y1). Done when: the Phase Y exit check passes.
 
+## Phase Z: Context diet
+
+**Goal:** the prompt carries the request, not the bot's own old reports, idle tools and silent members' states.
+**Exit:** a week of live replies where owner DM prompts are well under the 38k-token first-round average before Z, with no golden case failing that passed before.
+
+- [x] Drop the Google Workspace MCP server (I5). Done when: the VPS `mcp.json` has no google server (backup kept) and the next startup logs 0 MCP tools.
+- [x] Shorten the bot's own older lines; `chat_history` searches the window (Z1). Done when: `TestCompactOwn` and `TestOlderMessages` pass.
+- [x] States only for active people (Z2). Done when: `TestActiveKeys` passes and main and the golden harness use `router.ActiveKeys`.
+- [x] One place for each rule; reminder fixed (Z3). Done when: `go test ./...` passes and the golden set fails no case the baseline didn't.
+- [x] Split `internal/router/router.go` into `router.go`, `system.go`, `prompt.go`, `parse.go` and `fit.go`, with no behaviour change. Done when: every original line is in the new files and `go test ./...` passes.
+- [x] Settle the prompt's self-conflicts (Z4-Z11): scheduled-run instructions and tools in their own system prompt, figures, states vs transcript, health, todos vs facts, rules > persona > style, tier protection. Done when: `TestScheduledSystemPrompt` and `TestSystemPromptLevels` pass and the golden set fails no case.
+- [ ] Live check (Z1-Z11). Done when: the Phase Z exit check passes.
+
 ## Cycle: feature and maintenance
 
 **Feature turn**

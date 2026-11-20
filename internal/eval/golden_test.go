@@ -158,7 +158,7 @@ func (e env) ask(t *testing.T, req router.Line, text string, hist []router.Line,
 	for i := 1; i <= len(handles); i++ {
 		keys = append(keys, handles[fmt.Sprintf("P%d", i)])
 	}
-	states, _ := e.db.RecentStates(ctx, keys) // K4, as main.go does
+	states, _ := e.db.RecentStates(ctx, router.ActiveKeys(handles, hist, req)) // K4, Z2, as main.go does
 	var people []router.Person
 	for i := 1; i <= len(handles); i++ {
 		h := fmt.Sprintf("P%d", i)

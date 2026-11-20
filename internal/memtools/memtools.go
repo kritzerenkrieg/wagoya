@@ -203,7 +203,7 @@ func (t *Turn) saveFactTool() llm.Tool {
 		"content": map[string]any{"type": "string", "description": "The fact, compressed: a one-word label and under 12 words, e.g. \"Job: nurse at Acme\", \"Likes: board games, jazz\", \"Alias: Bill\". In English."},
 		"kind":    map[string]any{"type": "string", "enum": kinds, "description": "fact (default); state for something that passes within a day (on the way home, sick today); claim for something said about someone that you can't verify; joke for banter."},
 	}
-	desc := "Save a durable fact about a person to your global memory: who they are, job, studies, origin, relationships, likes, habits, things they asked you to remember. Skip what is already known, small talk and anything sensitive (passwords, phone numbers, addresses, health, money). Returns saved, or an error to fix."
+	desc := "Save a durable fact about a person to your global memory: who they are, job, studies, origin, relationships, likes, habits, health. Not todos or chores: those are tasks. Skip what is already known, small talk and anything sensitive (passwords, phone numbers, addresses, money). Returns saved, or an error to fix."
 	if !t.Curator {
 		props["source"] = map[string]any{"type": "string", "enum": sources, "description": "Who said it: requester (default) if the person asking you told you; self if the subject said it about themselves in the transcript; inferred if you are reading between the lines."}
 		desc += " Only say you saved something if this returned saved."
@@ -295,7 +295,7 @@ func (t *Turn) invalidateTool() llm.Tool {
 		Name: "invalidate_fact",
 		Description: "Mark a stored fact as no longer true, by its id from search_facts. It is kept as history, hidden from normal search. " +
 			"Only when the request has whitelisted=\"yes\" and asks to forget or correct something, or when the person the fact is about says it is no longer true. " +
-			"For a correction, also save the new fact. Only say you forgot something if this returned done.",
+			"A fact an owner saved can only be retracted by an owner. For a correction, also save the new fact. Only say you forgot something if this returned done.",
 		Schema: map[string]any{"type": "object", "required": []string{"id", "reason"}, "properties": map[string]any{
 			"id":     map[string]any{"type": "integer", "description": "The fact id from search_facts (\"fact 123 | ...\")."},
 			"reason": map[string]any{"type": "string", "description": "Short reason, e.g. \"moved to Bali\" or \"asked to forget\"."},
@@ -348,7 +348,7 @@ func (t *Turn) invalidate(ctx context.Context, id int64, reason string) (string,
 	done, err := t.DB.InvalidateFactID(ctx, id, by, reason+" ("+t.Requester.SenderName+")")
 	switch {
 	case errors.Is(err, store.ErrOutranked):
-		return "", errors.New("that fact comes from a more trusted source; only an owner can retract it")
+		return "", errors.New("that fact comes from a more trusted source; only an owner can retract it. Save their correction as a claim (kind claim) and tell them an owner can confirm it") // Z11
 	case err != nil:
 		return "", errors.New("storage failed")
 	case !done:
@@ -398,14 +398,19 @@ func (t *Turn) saveMemoryTool() llm.Tool {
 // historyPage is how many older messages chat_history returns per call (L9).
 const historyPage = 20
 
-// chatHistoryTool searches this chat's messages from before <transcript>,
-// kept for store.MessageTTL (L9). Only this chat: never another chat's.
+// historyLineRunes caps one chat_history result: enough to read back the
+// bot's own reply that the transcript shortened (Z1).
+const historyLineRunes = 1200
+
+// chatHistoryTool searches this chat's kept messages (store.MessageTTL, L9),
+// the window included, so the bot's own shortened lines (Z1) can be read in
+// full; an empty query pages back from before <transcript>. Only this chat:
+// never another chat's.
 func (t *Turn) chatHistoryTool() llm.Tool {
 	return llm.Tool{
 		Name: "chat_history",
-		Description: "Search this chat's older messages, from before <transcript> (kept for the last 3 days only). " +
-			"Use it when someone refers to something said earlier that isn't in <transcript> or <summary>. " +
-			"query: words or a name to look for; empty lists the messages just before <transcript>. page: 0 for the first results, 1 for the next.",
+		Description: "Search this chat's messages from the last 3 days, by words or a sender's name, including <transcript>, whose older lines of yours are shortened. " +
+			"query: words or a name; empty lists the messages just before <transcript>. page: 0 for the first results, 1 for the next.",
 		Schema: map[string]any{"type": "object", "properties": map[string]any{
 			"query": map[string]any{"type": "string"},
 			"page":  map[string]any{"type": "integer", "minimum": 0},
@@ -430,18 +435,18 @@ func (t *Turn) chatHistoryTool() llm.Tool {
 				if in.Page > 0 {
 					return "no more older messages"
 				}
-				return "no older messages match (only the last 3 days are kept)"
+				return "no messages match (only the last 3 days are kept)"
 			}
 			var b strings.Builder
-			fmt.Fprintf(&b, "%d older messages from this chat, oldest first:\n", len(lines))
+			fmt.Fprintf(&b, "%d messages from this chat, oldest first:\n", len(lines))
 			for _, l := range lines {
 				who := l.SenderName
 				if l.FromBot {
 					who += " (you)"
 				}
 				text := strings.Join(strings.Fields(l.Text), " ")
-				if r := []rune(text); len(r) > 500 {
-					text = string(r[:500]) + "…"
+				if r := []rune(text); len(r) > historyLineRunes {
+					text = string(r[:historyLineRunes]) + "…"
 				}
 				fmt.Fprintf(&b, "[%s] %s: %s\n", l.Time.Format("2006-01-02 15:04"), who, text)
 			}

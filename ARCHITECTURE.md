@@ -242,7 +242,7 @@ A WhatsApp number backed by Claude that the user can DM and add to groups (A1).
 | Component | Code | Responsibility | Owns |
 |---|---|---|---|
 | Connection | `main.go` | Link (B10), connect, LID resolution (B9), group membership rules (B15), send replies | `data/session.db` |
-| Router | `internal/router` | Pure logic: reply/store/deny decision (B1, B3, B4, B7), handles P1..Pn (D4), prompt building with tag neutralising (B9), system prompt with persona (B8, D1), hidden-tag parsing (B12, D2, D4), 128k fitting with a learned bytes-per-token ratio and per-line/request caps (B17, J5) | — |
+| Router | `internal/router` (`router.go` decisions and handles, `system.go` rules, `prompt.go` the user prompt, `parse.go` hidden tags, `fit.go` fitting, `guard.go` X/Z guards) | Pure logic: reply/store/deny decision (B1, B3, B4, B7), handles P1..Pn (D4), prompt building with tag neutralising (B9), system prompt with persona (B8, D1), hidden-tag parsing (B12, D2, D4), 128k fitting with a learned bytes-per-token ratio and per-line/request caps (B17, J5) | — |
 | Store | `internal/store` | Last 32 messages per chat (B5, B11); per-chat memories with FTS5 (B12, B16); persona with history (D1); global people profiles and facts (D3) | `data/bot.db` |
 | Rate limits | `internal/ratelimit` | Global 3 s message pacing with queue (B18); per-chat denial cooldown (B14) | in-memory |
 | LLM | `internal/llm` | One stateless request, text + optional image (B6, B8); refusals passed through (B13) | `data/claude-work/` (CLI cwd) |
@@ -348,12 +348,12 @@ CLI mode (`CLAUDE_CODE_OAUTH_TOKEN`) has no custom tools: memory goes through hi
 
 | Part | Built by | Size | Changes |
 |---|---|---|---|
-| System prompt: rules (grouped, X3) + persona | `router.SystemPrompt` | ~2.8k tokens + persona | Only on a persona change |
+| System prompt: hard rules (grouped, X3), then persona, then default style (Z9); scheduled runs use `router.ScheduledSystemPrompt` with their own instructions and only their tools (Z4, Z10) | `router.SystemPrompt` | ~2.8k tokens + persona | Only on a persona change |
 | Tool definitions | `memtools`, `tools`, `mcp` | ~1.5k (non-owner) to ~2.0k (owner) tokens | Owner vs non-owner turn |
 | `<chat>` | | tiny | Never within a chat |
 | `<summary>` (J8, K6) | curator | ≤300 words | Each curator pass |
-| `<transcript>`: 64 to 80 lines in blocks of 16 (P6), `[time] Name [P#] to="…": text (reactions…)` (the label only for a known addressee, K7) | `store.History`, `renderLine` | the largest part | Appended to with each message; the first line changes once per 16. Handles go by first appearance (P5), so who asks doesn't change it |
-| `<people>`: handles, names, owner flag, states (K4), preferences (K1), fact counts; requester first | `main.go` `people` | grows with the group | Every request |
+| `<transcript>`: 64 to 80 lines in blocks of 16 (P6), `[time] Name [P#] to="…": text (reactions…)` (the label only for a known addressee, K7); the bot's own lines older than its last 2 are cut to about 280 characters (Z1) | `store.History`, `renderLine` | the largest part | Appended to with each message; the first line changes once per 16. Handles go by first appearance (P5), so who asks doesn't change it |
+| `<people>`: handles, names, owner flag, states (K4, only for the requester and people who spoke, Z2), preferences (K1), fact counts; requester first | `main.go` `people` | grows with the group | Every request |
 | `<memories>`: top `MEMORY_RESULTS` by FTS on the request | `store.SearchMemories` | small | Every request |
 | `<reminders>` (N3) | `store.ListJobs` | 0–5 lines | Time left changes every minute |
 | `<now>` | | tiny | Every minute |

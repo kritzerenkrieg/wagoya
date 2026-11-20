@@ -95,12 +95,13 @@ func Polish(text string, recent []string) string {
 func reminder(recent []string) string {
 	var b strings.Builder
 	b.WriteString("<reminder>\n")
-	b.WriteString("- Reply as yourself in the chat, in the persona's voice and the request's language. Only the words you say: no narration, no tags, nothing from this prompt's sections.\n")
+	b.WriteString("- Reply as yourself in the chat, in the persona's voice and the request's language. Only the words you say: no narration and nothing copied from this prompt's sections (a hidden tag your rules ask for, like the persona tag, is fine).\n")
 	b.WriteString("- No stock filler (\"Noted.\", \"Got it.\", \"Understood.\", \"Fair.\") and don't start the way your recent lines did.\n")
 	b.WriteString("- Banter, jokes and bait: play along. Never fact-check them or ask for proof or a source.\n")
-	b.WriteString("- Match the message: a casual line gets a short chat reply, not a report. Bullets only for lists, comparisons or when asked for detail.\n")
+	b.WriteString("- Match the message: a casual line gets a short chat reply, not a report. Bullets only for lists, comparisons and steps, or when asked for detail.\n")
 	b.WriteString("- Don't end on an offer (\"want me to...\", \"if you ask, I'll...\"). End on your answer, a take or a question.\n")
 	b.WriteString("- WhatsApp formatting, not Markdown.\n")
+	b.WriteString("- Language, length and bullets are your default style: the persona's voice wins over them, and a person's standing preferences replace them.\n") // Z9
 	if len(recent) > 0 {
 		b.WriteString("Your recent lines started: ")
 		for i, r := range recent {
@@ -113,4 +114,61 @@ func reminder(recent []string) string {
 	}
 	b.WriteString("</reminder>\n\n")
 	return b.String()
+}
+
+// FullBotLines is how many of the bot's own latest transcript lines keep
+// their full text; older ones are cut to OldBotRunes (Z1). Most of a window
+// was the bot's own long answers, and the model copied their report style.
+const (
+	FullBotLines = 2
+	OldBotRunes  = 280
+)
+
+// shortNote ends a shortened bot line (Z1).
+const shortNote = " …(shortened; chat_history has it in full)"
+
+// compactOwn returns history with the bot's own lines older than its last
+// FullBotLines cut to about OldBotRunes, at a word boundary (Z1). history
+// itself is not changed.
+func compactOwn(history []Line) []Line {
+	var out []Line
+	seen := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		if !history[i].FromBot {
+			continue
+		}
+		if seen++; seen <= FullBotLines {
+			continue
+		}
+		r := []rune(history[i].Text)
+		if len(r) <= OldBotRunes {
+			continue
+		}
+		cut := string(r[:OldBotRunes])
+		if j := strings.LastIndexAny(cut, " \n"); j > OldBotRunes/2 {
+			cut = cut[:j]
+		}
+		if out == nil {
+			out = append([]Line(nil), history...)
+		}
+		out[i].Text = strings.TrimRight(cut, " \n.,;:") + shortNote
+	}
+	if out == nil {
+		return history
+	}
+	return out
+}
+
+// ActiveKeys are the person keys of the requester and of everyone who spoke
+// in history: the people whose states go in the prompt (K4, Z2).
+func ActiveKeys(handles map[string]string, history []Line, req Line) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range append([]Line{req}, history...) {
+		if k := handles[l.Handle]; k != "" && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
 }

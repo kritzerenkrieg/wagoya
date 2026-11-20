@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -188,9 +189,9 @@ func (s *Store) AddMessage(ctx context.Context, chat string, l router.Line) erro
 	return err
 }
 
-// OlderMessages searches chat's messages from before the window (L9): those
-// matching the most words of query first, then newest; an empty query pages
-// back from the window. Results are oldest first.
+// OlderMessages searches chat's kept messages (L9): those matching the most
+// words of query first, then newest, the window included (Z1); an empty
+// query pages back from before the window. Results are oldest first.
 func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, offset int) ([]router.Line, error) {
 	start, err := s.windowStart(ctx, chat)
 	if err != nil || start == 0 {
@@ -202,6 +203,12 @@ func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, of
 		score += ` + (text LIKE ? ESCAPE '\') + (sender_name LIKE ? ESCAPE '\')`
 		args = append(args, pat, pat)
 	}
+	// Z1: a word search covers the window too, since the bot's own older
+	// lines there are shortened in the prompt; paging back stays before it.
+	before := start
+	if len(args) > 0 {
+		before = math.MaxInt64
+	}
 	q := `SELECT ts, sender_id, sender_name, whitelisted, from_bot, text, wa_id FROM
 	        (SELECT *, ` + score + ` AS score FROM messages WHERE chat = ? AND id < ?)`
 	if len(args) > 0 {
@@ -210,7 +217,7 @@ func (s *Store) OlderMessages(ctx context.Context, chat, query string, limit, of
 		q += ` ORDER BY id DESC`
 	}
 	q += ` LIMIT ? OFFSET ?`
-	args = append(args, chat, start, limit, offset)
+	args = append(args, chat, before, limit, offset)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err

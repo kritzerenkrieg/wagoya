@@ -560,8 +560,15 @@ func TestOlderMessages(t *testing.T) {
 	if got, _ := s.OlderMessages(ctx, "g", "who said Messi ballon", 1, 0); text(got) != "Messi has 8 Ballon d'Ors" {
 		t.Fatalf("best match first: %q", text(got))
 	}
-	if got, _ := s.OlderMessages(ctx, "g", "jack", 10, 0); text(got) != "Messi is overrated" {
+	// Z1: a word search covers the window too (its "window two" is Jack's).
+	if got, _ := s.OlderMessages(ctx, "g", "jack", 10, 0); text(got) != "Messi is overrated | window two" {
 		t.Fatalf("by sender name: %q", text(got))
+	}
+	if got, _ := s.OlderMessages(ctx, "g", "window one", 1, 0); text(got) != "window one" {
+		t.Fatalf("window line not found by words: %q", text(got))
+	}
+	if got, _ := s.OlderMessages(ctx, "g", "secret", 10, 0); len(got) != 0 {
+		t.Fatalf("other chat leaked: %q", text(got))
 	}
 	if got, _ := s.OlderMessages(ctx, "g", "", 10, 3); len(got) != 0 {
 		t.Fatalf("offset past the end: %q", text(got))

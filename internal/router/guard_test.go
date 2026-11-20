@@ -99,3 +99,46 @@ func TestPromptReminder(t *testing.T) {
 		t.Error("openers line without any bot lines")
 	}
 }
+
+// Z1: the bot's own lines older than its last two are shortened at a word
+// boundary; others' lines and its latest replies stay whole.
+func TestCompactOwn(t *testing.T) {
+	long := strings.Repeat("word ", 100) // 500 runes
+	h := []Line{
+		{FromBot: true, Text: long},            // 3rd from last bot line: cut
+		{SenderName: "Jim", Text: long},        // not the bot's: kept
+		{FromBot: true, Text: "short old one"}, // 3rd-oldest... short: kept
+		{FromBot: true, Text: long},            // 2nd from last: kept
+		{SenderName: "Jim", Text: "and?"},
+		{FromBot: true, Text: long}, // last: kept
+	}
+	got := compactOwn(h)
+	if h[0].Text != long {
+		t.Fatal("history itself was changed")
+	}
+	if !strings.HasSuffix(got[0].Text, shortNote) || len([]rune(got[0].Text)) > OldBotRunes+len([]rune(shortNote)) || strings.HasSuffix(strings.TrimSuffix(got[0].Text, shortNote), " wor") {
+		t.Errorf("old bot line: %q", got[0].Text)
+	}
+	for _, i := range []int{1, 2, 3, 5} {
+		if got[i].Text != h[i].Text {
+			t.Errorf("line %d changed: %q", i, got[i].Text)
+		}
+	}
+	if p := BuildPrompt(Prompt{History: h}); !strings.Contains(p, shortNote) || strings.Count(p, long) != 3 {
+		t.Errorf("prompt doesn't use the compacted window:\n%s", p)
+	}
+	short := []Line{{FromBot: true, Text: "a"}, {FromBot: true, Text: "b"}}
+	if out := compactOwn(short); &out[0] != &short[0] {
+		t.Error("copied a window with nothing to cut")
+	}
+}
+
+// Z2: states only for the requester and people who spoke in the window,
+// not for group members listed by L5 who haven't.
+func TestActiveKeys(t *testing.T) {
+	handles := map[string]string{"P1": "jim", "P2": "jane", "P3": "silent", "P4": "req"}
+	hist := []Line{{Handle: "P1"}, {Handle: "P2"}, {Handle: "P1"}, {FromBot: true}}
+	if got := ActiveKeys(handles, hist, Line{Handle: "P4"}); strings.Join(got, ",") != "req,jim,jane" {
+		t.Fatalf("ActiveKeys = %v", got)
+	}
+}

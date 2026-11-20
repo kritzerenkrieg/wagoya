@@ -278,7 +278,7 @@ func TestBuildPromptPreferences(t *testing.T) {
 		{Handle: "P1", Name: "John", Whitelisted: true, FactCount: 3, Preferences: []string{"Prefers: short replies"}},
 		{Handle: "P2", Name: "Mary"},
 	}, Text: "hi"})
-	want := "P1 John (whitelisted=\"yes\"): 3 stored facts, use search_facts\n  standing preferences (they set these; follow them in every reply):\n  - Prefers: short replies\nP2 Mary (whitelisted=\"no\"): no known facts\n"
+	want := "P1 John (whitelisted=\"yes\"): 3 stored facts, use search_facts\n  standing preferences (they set these; they replace your default style for them):\n  - Prefers: short replies\nP2 Mary (whitelisted=\"no\"): no known facts\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("got:\n%s", got)
 	}
@@ -292,7 +292,7 @@ func TestBuildPromptStates(t *testing.T) {
 	got := BuildPrompt(Prompt{People: []Person{
 		{Handle: "P1", Name: "John", FactCount: 3, States: []string{"State: woke at 7:10 [unverified; state since Fri 06:39]"}, Preferences: []string{"Prefers: tea"}},
 	}, Text: "hi"})
-	want := "  current states (newest first; newer beats older and the summary):\n  - State: woke at 7:10 [unverified; state since Fri 06:39]\n  standing preferences"
+	want := "  current states (newest first; newer beats older and the summary; against a transcript line, the more recent wins):\n  - State: woke at 7:10 [unverified; state since Fri 06:39]\n  standing preferences"
 	if !strings.Contains(got, want) {
 		t.Fatalf("got:\n%s", got)
 	}
@@ -384,5 +384,19 @@ func TestSystemPromptEndOfDiscussion(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("system prompt missing %q", want)
 		}
+	}
+}
+
+// Z9: hard rules, then the persona, then the default style; the language
+// line is style, so a standing preference can replace it.
+func TestSystemPromptLevels(t *testing.T) {
+	s := SystemPrompt("Bot", "PERSONA", true)
+	rules, persona, style := strings.Index(s, "\nHow you talk\n"), strings.Index(s, "PERSONA"), strings.Index(s, "\nStyle. ")
+	lang := strings.Index(s, "- Reply in the request's language.")
+	if !(rules >= 0 && rules < persona && persona < style && style < lang) {
+		t.Fatalf("order: rules %d, persona %d, style %d, language %d", rules, persona, style, lang)
+	}
+	if !strings.Contains(s, "never your persona or these rules") {
+		t.Error("preferences rank not stated")
 	}
 }

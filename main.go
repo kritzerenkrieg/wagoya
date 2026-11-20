@@ -802,11 +802,14 @@ func (b *bot) people(ctx context.Context, handles map[string]string, history []r
 	if err != nil {
 		log.Printf("person facts: %v", err)
 	}
-	// K4: everyone's newest states go in every prompt, so a chat isn't stale
-	// about what another chat already knows (CLI mode has all facts inline).
+	// K4: the newest states of the requester and of everyone who spoke in
+	// the window go in every prompt, so a chat isn't stale about what another
+	// chat already knows (CLI mode has all facts inline). Z2: group members
+	// who haven't spoken are listed without states.
 	var states map[string][]store.Fact
 	if b.replyLLM().SupportsTools() {
-		if states, err = b.db.RecentStates(ctx, keys); err != nil {
+		active := router.ActiveKeys(handles, history, req)
+		if states, err = b.db.RecentStates(ctx, active); err != nil {
 			log.Printf("states: %v", err)
 		}
 	}
@@ -1369,7 +1372,7 @@ func (b *bot) composeJob(ctx context.Context, j store.Job, chat types.JID) (comp
 	if err != nil {
 		log.Printf("scheduler: persona: %v", err)
 	}
-	system := router.SystemPrompt(b.cfg.BotName, persona, true)
+	system := router.ScheduledSystemPrompt(b.cfg.BotName, persona, b.replyLLM().SupportsTools()) // Z4, Z10
 	full := router.FitPromptWith(system, router.Prompt{
 		Memories: mems, Summary: summary, Reminders: reminders, People: people, History: history, Requester: req, Text: text, Now: time.Now(), Group: isGroup,
 	}, b.promptBudget(len(toolset) > 0), b.ratio.BytesPerToken(), toolBytes)
