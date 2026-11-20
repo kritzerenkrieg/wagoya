@@ -74,7 +74,7 @@ const HelpText = "Owner commands:\n" +
 	"- !provider [name]: show the model provider, or switch it (until restart)\n" +
 	"- !reasoning [none|low|medium|high]: show or set the active provider's reasoning effort (saved)\n" +
 	"- !web [builtin|openrouter]: show the web search backend, or switch it (until restart)\n" +
-	"- !time [+7]: show the time zone, or set it as hours from UTC (saved; restarts the bot)\n" +
+	"- !time [+7]: show the time zone, or set it as hours from UTC (saved; the bot restarts itself)\n" +
 	"- !reset: clear this chat's context (facts, memories and reminders are kept)\n" +
 	"- !mute @person [30m|2h|1d]: mute someone in every chat, until !unmute or for a while\n" +
 	"- !unmute @person: lift a mute or a flood timeout\n" +
@@ -251,5 +251,5 @@ func TimeText(now time.Time, note string) string {
 
 // TimeSet is the !time reply after a change (L15).
 func TimeSet(zone string) string {
-	return "Time zone set to *" + zone + "*. Saved; restarting to apply it, back in about 10 seconds."
+	return "Time zone set to *" + zone + "*. Saved; restarting to apply it, back in a few seconds."
 }

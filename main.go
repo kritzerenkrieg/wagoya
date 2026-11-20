@@ -39,7 +39,7 @@ import (
 )
 
 type bot struct {
-	restart func() // L15: ends the process; systemd restarts it
+	restart func() // L15: shuts the bot down and starts it afresh
 	cfg     *config.Config
 	wa      *whatsmeow.Client
 	db      *store.Store
@@ -90,7 +90,11 @@ type bot struct {
 	newHTTPTool func(tools.Keys) llm.Tool
 }
 
+// reexec asks main to start the program afresh once it has shut down (L15).
+var reexec atomic.Bool
+
 func main() {
+	defer restartIfAsked() // first in, so it runs last: after every Close
 	if err := config.LoadDotEnv(".env"); err != nil {
 		log.Fatalf("read .env: %v", err)
 	}
@@ -150,7 +154,7 @@ func main() {
 	for _, k := range cfg.IgnoredKeys { // Y1
 		log.Printf("%s in .env is ignored: reasoning effort is set with !reasoning and stored in the database (default %s)", k, config.DefaultEffort)
 	}
-	b.restart = stop // L15: !time restarts to apply a new zone; systemd brings the bot back
+	b.restart = func() { reexec.Store(true); stop() } // L15: !time restarts to apply a new zone
 	b.loadEfforts(ctx)
 	b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), true))
 	// W1: our own web tools, for everyone. Set up even when the default
@@ -1531,6 +1535,22 @@ func (b *bot) effortFor(provider string) string {
 // at (Y1), for every reply that shows an effort.
 func effortOf(provider, e string) router.Effort {
 	return router.Effort{Set: e, Runs: llm.EffectiveEffort(provider, e)}
+}
+
+// restartIfAsked replaces the process with a fresh run of the same binary,
+// same arguments and environment, when !time asked for it (L15). It keeps
+// the PID, so systemd sees no stop; under go run it works the same. If it
+// fails, the process exits with an error and systemd starts it again.
+func restartIfAsked() {
+	if !reexec.Load() {
+		return
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		log.Print("restarting")
+		err = syscall.Exec(exe, os.Args, os.Environ())
+	}
+	log.Fatalf("restart: %v", err)
 }
 
 // zoneKey is the settings key of the !time zone, in seconds east of UTC (L15).
