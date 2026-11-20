@@ -38,17 +38,11 @@ func TestLeaks(t *testing.T) {
 // X2: stock fillers are cut, the reply's own words kept.
 func TestPolish(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
-		{"Noted. The meeting moved to Friday.", "The meeting moved to Friday."},
-		{"...Noted. The meeting moved to Friday.", "The meeting moved to Friday."},
-		{"...Fair. That one was my mistake.", "That one was my mistake."},
-		{"Understood. I'll keep it short.", "I'll keep it short."},
-		{"got it, see you at 7", "See you at 7"},
-		{"Noted.", ""},
-		{"...Noted. Fair.", ""},
-		{"Fair point, but no.", "Fair point, but no."}, // not a filler: no punctuation after "Fair"
-		{"Ok so here's the plan.", "Ok so here's the plan."},
-		{"Right, both are in Europe.", "Right, both are in Europe."}, // "Right" carries meaning
-		{"...Whatever.", "...Whatever."},                             // no recent "..." line
+		// Z12: fillers are the prompt's job; the persona may ask for them.
+		{"Noted. The meeting moved to Friday.", "Noted. The meeting moved to Friday."},
+		{"Noted.", "Noted."},
+		{"...Noted. Fair.", "...Noted. Fair."}, // no recent "..." line
+		{"...Whatever.", "...Whatever."},
 	} {
 		if got := Polish(c.in, nil); got != c.want {
 			t.Errorf("Polish(%q) = %q, want %q", c.in, got, c.want)

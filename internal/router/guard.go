@@ -22,11 +22,6 @@ var leakRe = regexp.MustCompile(`(?im)` +
 // dropped, not sent: it can carry stored facts about people into a chat.
 func Leaks(text string) bool { return leakRe.MatchString(text) }
 
-// fillerRe is a stock filler opening a reply (D8, X2), with the persona's
-// leading "..." if any. It needs punctuation after it, so "Fair point" or
-// "Ok so" are left alone.
-var fillerRe = regexp.MustCompile(`(?i)^\s*(\.{2,}|…)?\s*(noted|got it|understood|fair enough|fair|okay|ok|alright|roger|copy that)\s*[.!,;:…]+\s*`)
-
 // ellipsisRe is a reply's leading "..." (X2).
 var ellipsisRe = regexp.MustCompile(`^\s*(\.{2,}|…)\s*`)
 
@@ -66,17 +61,12 @@ func opener(s string) string {
 	return o
 }
 
-// Polish fixes a reply's opening in code (X2): a stock filler opener is
-// cut, and so is a leading "..." when one of the bot's recent lines opened
-// with one too. A reply that was only a filler becomes "" (nothing is
-// sent, as M5). recent are the bot's own last openers (Openers).
+// Polish fixes a reply's opening in code (X2): a leading "..." is cut when
+// one of the bot's recent lines opened with one too. Stock fillers are left
+// to the prompt's style rule, which the persona may override (Z9, Z12).
+// recent are the bot's own last openers (Openers).
 func Polish(text string, recent []string) string {
 	out := text
-	for range 2 { // "...Noted. Fair. ..." loses both
-		if m := fillerRe.FindString(out); m != "" {
-			out = out[len(m):]
-		}
-	}
 	if ellipsisRe.MatchString(out) && slices.ContainsFunc(recent, ellipsisRe.MatchString) {
 		out = ellipsisRe.ReplaceAllString(out, "")
 	}
