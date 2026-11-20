@@ -21,6 +21,7 @@ func TestParseCommand(t *testing.T) {
 		"!Provider openrouter":       "provider|openrouter",
 		"!reasoning":                 "reasoning|",
 		"@Bot !Reasoning HIGH":       "reasoning|HIGH",
+		"!time +7":                   "time|+7",
 		"/reset":                     "", // L12: "/" is other bots' prefix now
 		"/budget":                    "",
 		"!keys":                      "",
@@ -133,6 +134,24 @@ func TestWebCommand(t *testing.T) {
 	for _, want := range []string{"openrouter: no api key set.", "*builtin*", "- builtin: ready (active)", "- openrouter: no api key set", "64k tokens of pages, digested to 8k"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %s", want, out)
+		}
+	}
+}
+
+// L15: !time takes hours from UTC, with or without a sign or minutes.
+func TestParseUTCOffset(t *testing.T) {
+	for in, want := range map[string]string{
+		"+7": "UTC+7", "7": "UTC+7", "UTC+7": "UTC+7", "utc-3": "UTC-3", "-3": "UTC-3", "0": "UTC", "UTC": "UTC",
+		"+5:30": "UTC+5:30", "+0545": "UTC+5:45", "+14": "UTC+14", "-12": "UTC-12",
+		"+15": "", "-13": "", "+5:20": "", "seven": "", "+": "", "++7": "", "+7:300": "", "Asia/Jakarta": "",
+	} {
+		off, ok := ParseUTCOffset(in)
+		got := ""
+		if ok {
+			got = ZoneName(off)
+		}
+		if got != want {
+			t.Errorf("ParseUTCOffset(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

@@ -39,10 +39,17 @@ import (
 )
 
 type bot struct {
-	cfg    *config.Config
-	wa     *whatsmeow.Client
-	db     *store.Store
-	models atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
+	restart   func()             // L15: shuts the bot down and starts it afresh
+	quit      context.Context    // done once shutdown starts: the scheduler sends nothing new
+	schedBusy chan struct{}      // held while a scheduler round runs; shutdown waits for it
+	cut       context.Context    // done when shutdown stops waiting: queued sends and compositions give up
+	cutSends  context.CancelFunc // ends cut
+	// deliver is sendJob; tests replace it.
+	deliver func(ctx context.Context, j store.Job, chat types.JID, commit func() bool)
+	cfg     *config.Config
+	wa      *whatsmeow.Client
+	db      *store.Store
+	models  atomic.Pointer[models] // L13: the active provider's clients, swapped by !provider
 	// Y1: !reasoning's effort per provider, loaded from and saved to
 	// settings; a provider without one runs at config.DefaultEffort.
 	// Guarded by modelsMu with the swap.
@@ -89,7 +96,11 @@ type bot struct {
 	newHTTPTool func(tools.Keys) llm.Tool
 }
 
+// reexec asks main to start the program afresh once it has shut down (L15).
+var reexec atomic.Bool
+
 func main() {
+	defer restartIfAsked() // first in, so it runs last: after every Close
 	if err := config.LoadDotEnv(".env"); err != nil {
 		log.Fatalf("read .env: %v", err)
 	}
@@ -112,6 +123,10 @@ func main() {
 		log.Fatalf("open bot db: %v", err)
 	}
 	defer db.Close()
+	// L15: the zone every local time is read and shown in, set with !time;
+	// applied before anything else runs, so nothing sees it change.
+	time.Local = loadZone(ctx, db)
+	log.Printf("time zone %s (set with !time)", time.Local)
 	// K6: summaries written before the fix may hold per-prompt handles.
 	if n, err := db.RewriteSummaries(ctx, func(t string) string { return router.StripHandles(t, nil) }); err != nil {
 		log.Printf("scrub summaries: %v", err)
@@ -145,6 +160,9 @@ func main() {
 	for _, k := range cfg.IgnoredKeys { // Y1
 		log.Printf("%s in .env is ignored: reasoning effort is set with !reasoning and stored in the database (default %s)", k, config.DefaultEffort)
 	}
+	b.restart = func() { reexec.Store(true); stop() } // L15: !time restarts to apply a new zone
+	b.quit, b.schedBusy = ctx, make(chan struct{}, 1)
+	b.cut, b.cutSends = context.WithCancel(context.Background())
 	b.loadEfforts(ctx)
 	b.models.Store(newModels(cfg, cfg.Provider, b.effortFor(cfg.Provider), true))
 	// W1: our own web tools, for everyone. Set up even when the default
@@ -208,6 +226,7 @@ func main() {
 	}
 	<-ctx.Done()
 	log.Print("shutting down")
+	b.waitScheduler(time.Minute, 15*time.Second) // under systemd's 90 s stop timeout
 	b.wa.Disconnect()
 }
 
@@ -965,12 +984,26 @@ func (b *bot) send(ctx context.Context, chat types.JID, text string, quote *even
 // sendMentions sends text, tagging the given JIDs (L3); their "@user" must
 // be in the text. It returns the sent message's id ("" if not sent).
 func (b *bot) sendMentions(_ context.Context, chat types.JID, text string, quote *events.Message, mentions []string) string {
+	id, _ := b.sendCommit(chat, text, quote, mentions, nil)
+	return id
+}
+
+// sendCommit is sendMentions with a commit step (J10, U3): once the message
+// has its turn in the queue, and right before it goes out, commit records it
+// as sent (a reminder marked, a one-off removed); if commit fails the message
+// isn't sent. A shutdown that stops waiting (cut) ends only the queue wait,
+// never a send already under way, so a cut-off message is known unsent and
+// stays due for the next start.
+func (b *bot) sendCommit(chat types.JID, text string, quote *events.Message, mentions []string, commit func() bool) (id string, committed bool) {
 	// Own context: a long queue must not inherit the request's deadline.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(b.cutCtx(), 30*time.Minute)
 	defer cancel()
 	if err := b.pacer.Wait(ctx); err != nil {
 		log.Printf("send to %s dropped: queue wait: %v", chat, err)
-		return ""
+		return "", false
+	}
+	if commit != nil && !commit() {
+		return "", false
 	}
 	msg := &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text)}}
 	if quote != nil {
@@ -986,12 +1019,22 @@ func (b *bot) sendMentions(_ context.Context, chat types.JID, text string, quote
 		}
 		msg.ExtendedTextMessage.ContextInfo.MentionedJID = mentions
 	}
-	resp, err := b.wa.SendMessage(ctx, chat, msg)
+	sctx, scancel := context.WithTimeout(context.Background(), 30*time.Minute) // never cut: it may already be out
+	defer scancel()
+	resp, err := b.wa.SendMessage(sctx, chat, msg)
 	if err != nil {
 		log.Printf("send to %s: %v", chat, err)
-		return ""
+		return "", true
 	}
-	return resp.ID
+	return resp.ID, true
+}
+
+// cutCtx is cut, or a context that never ends (tests without it).
+func (b *bot) cutCtx() context.Context {
+	if b.cut != nil {
+		return b.cut
+	}
+	return context.Background()
 }
 
 // ---- B15: only stay in groups a whitelisted member added us to and that
@@ -1173,18 +1216,59 @@ func (b *bot) runScheduler() {
 		repeatGrace = 30 * time.Minute
 	)
 	for {
+		select {
+		case b.schedBusy <- struct{}{}:
+		case <-b.quit.Done():
+			return
+		}
 		b.runDue(time.Now(), oneOffGrace, repeatGrace)
 		b.runTaskReminders(time.Now()) // U3
-		time.Sleep(tick)
+		<-b.schedBusy
+		select {
+		case <-time.After(tick):
+		case <-b.quit.Done():
+			return
+		}
 	}
 }
+
+// waitScheduler waits, up to max, for a scheduler round in progress to
+// finish, and keeps a new one from starting. A round starts no new send once
+// shutdown begins. After max, queued sends and compositions are cut off
+// (cut): they were never committed (sendCommit), so they stay due for the
+// next start; grace lets the round wind down before the database closes.
+func (b *bot) waitScheduler(max, grace time.Duration) {
+	select {
+	case b.schedBusy <- struct{}{}:
+		return
+	case <-time.After(max):
+	}
+	log.Printf("shutdown: a scheduled send still pending after %s: cutting it off, it goes out after the restart", max)
+	if b.cutSends != nil {
+		b.cutSends()
+	}
+	select {
+	case b.schedBusy <- struct{}{}:
+	case <-time.After(grace):
+		// Only a send already committed can still run: WhatsApp is slow to
+		// take it. It stays committed (U3: at most once, so an uncertain
+		// delivery is never repeated); the log says which to check.
+		log.Printf("shutdown: a committed scheduled send still running after %s more; it may not have gone out (see the last \"scheduler:\" or \"task reminders:\" line)", grace)
+	}
+}
+
+// cutOff reports whether shutdown has cut off queued sends.
+func (b *bot) cutOff() bool { return b.cut != nil && b.cut.Err() != nil }
+
+// stopping reports whether shutdown has begun (nil quit: never, in tests).
+func (b *bot) stopping() bool { return b.quit != nil && b.quit.Err() != nil }
 
 // runTaskReminders reminds owners of tasks coming due (U3). Code decides
 // when (store.Todo.RemindAt); the message is written now, like a scheduled
 // one (T1). It goes to the owner's DM if they may DM the bot (B3), else to
 // the chat the task was added in, tagging them.
 func (b *bot) runTaskReminders(now time.Time) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(b.cutCtx(), 10*time.Minute) // cut ends a composition at shutdown
 	defer cancel()
 	due, err := b.db.TodoRemindersDue(ctx, now)
 	if err != nil {
@@ -1192,14 +1276,23 @@ func (b *bot) runTaskReminders(now time.Time) {
 		return
 	}
 	for _, td := range due {
-		// Marked first: a reminder goes out at most once per due time.
-		if err := b.db.MarkTodoReminded(ctx, td.ID, td.Due); err != nil {
-			log.Printf("task reminders: task %d: %v", td.ID, err)
-			continue
+		if b.stopping() {
+			return // still unmarked, so sent after the restart
+		}
+		// Marked right before it goes out, so a reminder goes out at most once
+		// per due time, and one cut off by shutdown stays due (sendCommit).
+		// One that can't go anywhere is marked too, not retried every tick.
+		mark := func() bool {
+			if err := b.db.MarkTodoReminded(ctx, td.ID, td.Due); err != nil {
+				log.Printf("task reminders: task %d: %v", td.ID, err)
+				return false
+			}
+			return true
 		}
 		acct, err := b.db.PersonAccount(ctx, td.Owner)
 		if err != nil {
 			log.Printf("task reminders: task %d: %v", td.ID, err)
+			mark()
 			continue
 		}
 		var chat types.JID
@@ -1213,20 +1306,22 @@ func (b *bot) runTaskReminders(now time.Time) {
 			dm = false
 			if chat, err = types.ParseJID(td.Chat); err != nil {
 				log.Printf("task reminders: task %d: bad chat", td.ID)
+				mark()
 				continue
 			}
 		default:
 			log.Printf("task reminders: task %d: nowhere to send", td.ID)
+			mark()
 			continue
 		}
 		brief := router.TaskReminderBrief(td.Name, td.Description, td.Due, now, dm, td.Owner)
 		log.Printf("task reminders: task %d due %s", td.ID, td.Due.Format(time.RFC3339))
-		b.sendJob(ctx, store.Job{Chat: chat.String(), CreatedBy: td.Owner, CreatedName: acct.Name, Text: brief}, chat)
+		b.deliverJob(ctx, store.Job{Chat: chat.String(), CreatedBy: td.Owner, CreatedName: acct.Name, Text: brief}, chat, mark)
 	}
 }
 
 func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(b.cutCtx(), 10*time.Minute) // cut ends a composition at shutdown
 	defer cancel()
 	jobs, err := b.db.DueJobs(ctx, now)
 	if err != nil {
@@ -1234,27 +1329,39 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 		return
 	}
 	for _, j := range jobs {
+		if b.stopping() {
+			return // still due, so sent after the restart (J10's grace)
+		}
 		send, next := memtools.DueAction(j, now, oneOffGrace, repeatGrace)
 		late := now.Sub(j.NextAt)
-		if !next.IsZero() {
-			if err := b.db.RescheduleJob(ctx, j.ID, next); err != nil {
-				log.Printf("scheduler: job %d: %v", j.ID, err)
-				continue
+		// Rescheduled or removed right before it goes out (sendCommit), so it
+		// goes out at most once, and one cut off by shutdown stays due.
+		advance := func() bool {
+			var err error
+			if next.IsZero() {
+				err = b.db.DeleteJob(ctx, j.ID) // a one-off, done
+			} else {
+				err = b.db.RescheduleJob(ctx, j.ID, next) // a recurring one: its next run
 			}
-		} else if err := b.db.DeleteJob(ctx, j.ID); err != nil {
-			log.Printf("scheduler: job %d: %v", j.ID, err)
-			continue
+			if err != nil {
+				log.Printf("scheduler: job %d: %v", j.ID, err)
+				return false
+			}
+			return true
 		}
 		if !send {
-			log.Printf("scheduler: job %d skipped, %s late", j.ID, late.Round(time.Minute))
+			if advance() {
+				log.Printf("scheduler: job %d skipped, %s late", j.ID, late.Round(time.Minute))
+			}
 			continue
 		}
 		chat, err := types.ParseJID(j.Chat)
 		if err != nil {
 			log.Printf("scheduler: job %d: bad chat", j.ID)
+			advance()
 			continue
 		}
-		b.sendJob(ctx, j, chat)
+		b.deliverJob(ctx, j, chat, advance)
 	}
 }
 
@@ -1262,7 +1369,7 @@ func (b *bot) runDue(now time.Time, oneOffGrace, repeatGrace time.Duration) {
 // current context (T1), and sends it; on a model error, an empty answer or
 // the M3 cap the brief goes out as written. L10: pinned "@{key}" tags in the
 // brief become real mentions.
-func (b *bot) sendJob(ctx context.Context, j store.Job, chat types.JID) {
+func (b *bot) sendJob(ctx context.Context, j store.Job, chat types.JID, commit func() bool) {
 	unlock := b.lock(j.Chat)
 	defer unlock()
 	out, stored, mentions := router.ExpandMentions(j.Text, b.nameOf(ctx))
@@ -1271,7 +1378,10 @@ func (b *bot) sendJob(ctx context.Context, j store.Job, chat types.JID) {
 		out, stored, mentions = text.send, text.stored, text.mentions
 		how = "written now"
 	}
-	sentID := b.sendMentions(ctx, chat, out, nil, mentionJIDs(mentions))
+	sentID, committed := b.sendCommit(chat, out, nil, mentionJIDs(mentions), commit)
+	if !committed {
+		return // cut off by shutdown, or the commit failed: still due
+	}
 	log.Printf("scheduler: sent job %d %s (%d mentions)", j.ID, how, len(mentions))
 	if err := b.db.AddMessage(ctx, j.Chat, router.Line{Time: time.Now(), SenderName: b.cfg.BotName, FromBot: true, Text: stored, ID: sentID,
 		To: b.mentionNames(ctx, mentions, "")}); err != nil { // K7
@@ -1282,6 +1392,16 @@ func (b *bot) sendJob(ctx context.Context, j store.Job, chat types.JID) {
 			log.Printf("scheduler: job %d: note sent: %v", j.ID, err)
 		}
 	}
+}
+
+// deliverJob sends a due job's message (sendJob, or the test's stand-in);
+// commit records it as sent right before it goes out (sendCommit).
+func (b *bot) deliverJob(ctx context.Context, j store.Job, chat types.JID, commit func() bool) {
+	if b.deliver != nil {
+		b.deliver(ctx, j, chat, commit)
+		return
+	}
+	b.sendJob(ctx, j, chat, commit)
 }
 
 type composed struct {
@@ -1525,6 +1645,59 @@ func (b *bot) effortFor(provider string) string {
 // at (Y1), for every reply that shows an effort.
 func effortOf(provider, e string) router.Effort {
 	return router.Effort{Set: e, Runs: llm.EffectiveEffort(provider, e)}
+}
+
+// restartIfAsked replaces the process with a fresh run of the same binary,
+// same arguments and environment, when !time asked for it (L15). It keeps
+// the PID, so systemd sees no stop; under go run it works the same. If it
+// fails, the process exits with an error and systemd starts it again.
+func restartIfAsked() {
+	if !reexec.Load() {
+		return
+	}
+	exe, err := os.Executable()
+	if err == nil {
+		log.Print("restarting")
+		err = syscall.Exec(exe, os.Args, os.Environ())
+	}
+	log.Fatalf("restart: %v", err)
+}
+
+// zoneKey is the settings key of the !time zone, in seconds east of UTC (L15).
+const zoneKey = "utc_offset"
+
+// loadZone is the saved !time zone, or UTC if none is saved (L15).
+func loadZone(ctx context.Context, db *store.Store) *time.Location {
+	v, err := db.Setting(ctx, zoneKey)
+	if err != nil {
+		log.Printf("time zone: %v", err)
+	}
+	off, err := strconv.Atoi(v)
+	if err != nil {
+		off = 0
+	}
+	return time.FixedZone(router.ZoneName(off), off)
+}
+
+// timeCommand applies !time (L15): no argument shows the zone; an offset
+// saves it, and restart says the bot must restart to apply it.
+func (b *bot) timeCommand(ctx context.Context, args []string) (reply string, restart bool) {
+	if len(args) == 0 {
+		return router.TimeText(time.Now(), ""), false
+	}
+	off, ok := router.ParseUTCOffset(strings.Join(args, ""))
+	if !ok {
+		return router.TimeText(time.Now(), fmt.Sprintf("Unknown offset %q.", strings.Join(args, " "))), false
+	}
+	zone := router.ZoneName(off)
+	if _, cur := time.Now().Zone(); cur == off {
+		return "Already on " + zone + ".", false
+	}
+	if err := b.db.SetSetting(ctx, zoneKey, strconv.Itoa(off)); err != nil {
+		log.Printf("time zone: save: %v", err)
+		return "Couldn't save the time zone; nothing changed.", false
+	}
+	return router.TimeSet(zone), true
 }
 
 // effortKey is the settings key of a provider's !reasoning level (Y1).
@@ -1913,6 +2086,13 @@ func (b *bot) command(ctx context.Context, e *events.Message, cmd router.Command
 		b.send(ctx, chat, b.reasoningCommand(ctx, cmd.Args), e)
 	case "web":
 		b.send(ctx, chat, b.webCommand(cmd.Args), e)
+	case "time":
+		reply, restart := b.timeCommand(ctx, cmd.Args)
+		b.send(ctx, chat, reply, e)
+		if restart && b.restart != nil {
+			log.Print("time zone changed: restarting")
+			b.restart()
+		}
 	case "help":
 		b.send(ctx, chat, router.HelpText, e)
 	}

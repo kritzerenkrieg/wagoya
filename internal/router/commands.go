@@ -11,11 +11,11 @@ import (
 // and never stored (L1, L2, M2, L12). Commands start with "!" (L12), so they
 // don't clash with other bots' "/" commands in the same group.
 type Command struct {
-	Name string   // "key", "reset", "mute", "unmute", "budget", "provider", "reasoning", "web" or "help"
+	Name string   // "key", "reset", "mute", "unmute", "budget", "provider", "reasoning", "web", "time" or "help"
 	Args []string // the words after the name
 }
 
-// ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider, !reasoning, !web and !help as the
+// ParseCommand recognizes !key, !reset, !mute, !unmute, !budget, !provider, !reasoning, !web, !time and !help as the
 // first word, after any leading @mentions ("@<BOT_NAME> !reset"). ok is false for
 // anything else, "/reset" included (L12).
 func ParseCommand(text string) (Command, bool) {
@@ -27,7 +27,7 @@ func ParseCommand(text string) (Command, bool) {
 		return Command{}, false
 	}
 	switch name := strings.ToLower(words[0]); name {
-	case "!key", "!reset", "!mute", "!unmute", "!budget", "!provider", "!reasoning", "!web", "!help":
+	case "!key", "!reset", "!mute", "!unmute", "!budget", "!provider", "!reasoning", "!web", "!time", "!help":
 		return Command{Name: name[1:], Args: words[1:]}, true
 	}
 	return Command{}, false
@@ -74,6 +74,7 @@ const HelpText = "Owner commands:\n" +
 	"- !provider [name]: show the model provider, or switch it (until restart)\n" +
 	"- !reasoning [none|low|medium|high]: show or set the active provider's reasoning effort (saved)\n" +
 	"- !web [builtin|openrouter]: show the web search backend, or switch it (until restart)\n" +
+	"- !time [+7]: show the time zone, or set it as hours from UTC (saved; the bot restarts itself)\n" +
 	"- !reset: clear this chat's context (facts, memories and reminders are kept)\n" +
 	"- !mute @person [30m|2h|1d]: mute someone in every chat, until !unmute or for a while\n" +
 	"- !unmute @person: lift a mute or a flood timeout\n" +
@@ -184,3 +185,71 @@ func WebText(active string, list []WebBackendInfo, raw, digest int, note string)
 // SearchingText is sent, quoting the request, when a reply starts its first
 // deep web search (W9); the answer follows as its own message.
 const SearchingText = "Searching..."
+
+// ParseUTCOffset reads a !time offset (L15): "+7", "-3", "7", "+5:30",
+// "+0545", "UTC+7" or "0". It returns seconds east of UTC, within the
+// zones in use (-12 to +14, minutes 0, 30 or 45).
+func ParseUTCOffset(s string) (int, bool) {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "UTC"), "GMT")
+	if s == "" {
+		return 0, true // "UTC" alone
+	}
+	sign := 1
+	switch s[0] {
+	case '+':
+		s = s[1:]
+	case '-':
+		sign, s = -1, s[1:]
+	}
+	h, m := s, "0"
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		h, m = s[:i], s[i+1:]
+	} else if len(s) == 4 {
+		h, m = s[:2], s[2:]
+	}
+	if strings.Trim(h+m, "0123456789") != "" {
+		return 0, false // Atoi would take a second sign
+	}
+	hh, err1 := strconv.Atoi(h)
+	mm, err2 := strconv.Atoi(m)
+	if err1 != nil || err2 != nil || len(h) == 0 || len(h) > 2 || len(m) > 2 || hh < 0 || (mm != 0 && mm != 30 && mm != 45) {
+		return 0, false
+	}
+	off := sign * (hh*3600 + mm*60)
+	if off < -12*3600 || off > 14*3600 {
+		return 0, false
+	}
+	return off, true
+}
+
+// ZoneName is an offset as "UTC", "UTC+7", "UTC-3" or "UTC+5:30" (L15).
+func ZoneName(off int) string {
+	if off == 0 {
+		return "UTC"
+	}
+	sign := "+"
+	if off < 0 {
+		sign, off = "-", -off
+	}
+	if m := off % 3600 / 60; m != 0 {
+		return fmt.Sprintf("UTC%s%d:%02d", sign, off/3600, m)
+	}
+	return fmt.Sprintf("UTC%s%d", sign, off/3600)
+}
+
+// TimeText is the !time reply for no argument or a wrong one (L15).
+func TimeText(now time.Time, note string) string {
+	var b strings.Builder
+	if note != "" {
+		b.WriteString(note + "\n\n")
+	}
+	fmt.Fprintf(&b, "Time zone: *%s* (now %s)", now.Location(), now.Format("Mon 2006-01-02 15:04"))
+	b.WriteString("\n\nUsage: !time +7 (hours from UTC, like -3 or +5:30)")
+	return b.String()
+}
+
+// TimeSet is the !time reply after a change (L15).
+func TimeSet(zone string) string {
+	return "Time zone set to *" + zone + "*. Saved; restarting to apply it, back in a few seconds."
+}
