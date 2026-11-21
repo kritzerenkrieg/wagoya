@@ -770,8 +770,16 @@ func cases() []golden {
 			}
 			return e.ask(t, stranger, router.WithQuote("is this real?", "Bot", quote, 4000), hist, &llm.Image{MediaType: "image/png", Data: seaPNG()})
 		}, func(r result) error {
-			if !regexp.MustCompile(`(?i)\b(sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape)\b`).MatchString(r.parsed.Text) {
-				return fmt.Errorf("didn't acknowledge the photo: %q", r.parsed.Text)
+			text := r.parsed.Text
+			photo := regexp.MustCompile(`(?i)\b(sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape)\b`).FindStringIndex(text)
+			if photo == nil {
+				return fmt.Errorf("didn't acknowledge the photo: %q", text)
+			}
+			if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open)`).MatchString(text) {
+				return fmt.Errorf("said it can't see the attached photo: %q", text)
+			}
+			if q := regexp.MustCompile(`(?i)37 ?%|anthropic|tool[- ]calling|sandbox|token`).FindStringIndex(text); q != nil && q[0] < photo[0] {
+				return fmt.Errorf("answered the quote before the photo: %q", text)
 			}
 			return clean(r)
 		}},
