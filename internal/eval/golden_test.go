@@ -1591,10 +1591,14 @@ func ignoredQuestionCheck(sum string) error {
 	bot := `(the )?(assistant|bot|she|it)`
 	// The assistant must be the verb's subject, with at most a few adverbs in
 	// between, so "John told the assistant to sit and asked it to woof" passes.
+	// An auxiliary counts only when active: "was asking" and "has asked"
+	// fail, the passive "was asked to sit" passes.
 	adverbs := `(\s+(also|then|again|still|repeatedly|later|kept|twice))*`
+	asking := `(asking|wondering|pressing|pushing|questioning|querying|wanting to know)`
+	active := `\s+((was|is|were|are|been|has been|had been)` + adverbs + `\s+` + asking + `|(has|had)` + adverbs + `\s+` + asked + `|` + asked + `)\b`
 	re := regexp.MustCompile(`(?i)waiting|unanswered|who pushed|who requested|whether (the client|the customer|he|john)|` +
 		`(has ?n['’]?t|has not|never|not yet|didn['’]?t|did not|no) (yet )?(answer|said|replied|told|respond)|` +
-		`\b` + bot + adverbs + `\s+` + asked + `\b|\b` + asked + ` by ` + bot + `\b|` + bot + `['’]s question`)
+		`\b` + bot + adverbs + active + `|\b` + asked + ` by ` + bot + `\b|` + bot + `['’]s question`)
 	if m := re.FindString(sum); m != "" {
 		return fmt.Errorf("kept the ignored question (%q): %q", m, sum)
 	}
