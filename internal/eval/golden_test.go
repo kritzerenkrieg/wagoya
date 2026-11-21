@@ -1068,10 +1068,7 @@ func cases() []golden {
 			if sum == "" {
 				return fmt.Errorf("no summary: %q", r.raw)
 			}
-			if regexp.MustCompile(`(?i)waiting|(has ?n['’]?t|has not|never|not yet|didn['’]?t|did not|no) (yet )?(answer|said|replied|told)|unanswered|who pushed|whether (the client|he|john)`).MatchString(sum) {
-				return fmt.Errorf("kept the ignored question: %q", sum)
-			}
-			return nil
+			return ignoredQuestionCheck(sum)
 		}},
 
 		{"doesn't chase a question the person ignored", func(t *testing.T, e env) result {
@@ -1583,6 +1580,22 @@ func seaPNG() []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, m)
 	return buf.Bytes()
+}
+
+// ignoredQuestionCheck fails a curator summary that keeps the assistant's
+// ignored question (D10): who pushed the report extension, its "waiting on"
+// or "hasn't answered", or the assistant asking anything at all. The deadline
+// itself, which John set, may stay.
+func ignoredQuestionCheck(sum string) error {
+	asked := `(asked|asks|wondered|wonders|wanted to know|wants to know|questioned|queried|pressed|pushed)`
+	bot := `(the )?(assistant|bot|rin|she|it)`
+	re := regexp.MustCompile(`(?i)waiting|unanswered|who pushed|who requested|whether (the client|the customer|he|john)|` +
+		`(has ?n['’]?t|has not|never|not yet|didn['’]?t|did not|no) (yet )?(answer|said|replied|told|respond)|` +
+		`\b` + bot + `\b[^.]{0,30}\b` + asked + `\b|\b` + asked + ` by ` + bot + `\b|` + bot + `['’]s question`)
+	if m := re.FindString(sum); m != "" {
+		return fmt.Errorf("kept the ignored question (%q): %q", m, sum)
+	}
+	return nil
 }
 
 // ownPhotoCheck is F7's check on a reply to "is this real?" with the sea
