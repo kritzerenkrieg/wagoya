@@ -1529,14 +1529,15 @@ func seaPNG() []byte {
 // photo, replying to a quoted claim: it must describe the photo, not say it
 // can't see it, and not answer the quoted claim first.
 func ownPhotoCheck(text string) error {
-	photo := regexp.MustCompile(`(?i)\b(sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape)\b`).FindStringIndex(text)
+	const scene = `sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape`
+	photo := regexp.MustCompile(`(?i)\b(` + scene + `)\b`).FindStringIndex(text)
 	if photo == nil {
 		return fmt.Errorf("didn't acknowledge the photo: %q", text)
 	}
-	// A denial of the photo itself: the photo word ends the phrase ("the
-	// beach photo.", "the image, but"), so "can't see any photo editing" or
-	// "signs of editing" are fine.
-	if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open|access|load) (the |this |that |your |any )?([\w-]+ ){0,2}(photo|image|picture|pic|attachment)s?(\s*$|\s*[.,;:!?)]|\s+(you|that|here|because|so|but|and|at|from|attached|sent)\b)`).MatchString(text) {
+	// A denial of the photo or what it shows: that word ends the phrase
+	// ("the beach photo.", "the beach.", "the image, but"), so "can't see any
+	// photo editing" or "signs of editing" are fine.
+	if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open|access|load) (the |this |that |your |any )?([\w-]+ ){0,2}(photo|image|picture|pic|attachment|` + scene + `)s?(\s*$|\s*[.,;:!?)]|\s+(you|that|here|because|so|but|and|at|from|attached|sent)\b)`).MatchString(text) {
 		return fmt.Errorf("said it can't see the attached photo: %q", text)
 	}
 	if q := regexp.MustCompile(`(?i)37 ?%|anthropic|tool[- ]calling|sandbox|token`).FindStringIndex(text); q != nil && q[0] < photo[0] {

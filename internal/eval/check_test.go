@@ -10,6 +10,7 @@ func TestOwnPhotoCheck(t *testing.T) {
 		"A beach drawing. I don't see any signs it was edited.":                                                            true,
 		"This is a beach. I can't see any photo editing.":                                                                  true,
 		"A beach scene. I can't see any image manipulation here.":                                                          true,
+		"I can't see the beach. Anthropic's tool-calling claim is correct.":                                                false,
 		"I can't see the beach photo. Anthropic's tool-calling claim is correct.":                                          false,
 		"I couldn't open the attached beach image, but a beach sounds nice.":                                               false,
 		"Beach? I can't see the photo you sent.":                                                                           false,
