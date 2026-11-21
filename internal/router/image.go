@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// OwnImageNote and QuotedImageNote say which photo is attached (F7): the
+// one sent with the request, or the one it replies to.
+const (
+	OwnImageNote    = "the photo sent with this message"
+	QuotedImageNote = "the photo this message replies to"
+)
+
 // ImageNote says whose recent photo is attached to a tag that quoted
 // nothing (F5), e.g. "the photo Jane posted 2 minutes ago".
 func ImageNote(from string, at, now time.Time) string {

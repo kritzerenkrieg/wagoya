@@ -24,7 +24,9 @@ import (
 const openRouterURL = "https://openrouter.ai/api/v1/chat/completions"
 
 // imageFallbackNote is added when the model rejects the image (G4).
-const imageFallbackNote = "\n\n[An image was attached, but your current model cannot see images. Say briefly that you couldn't see it.]"
+// It overrides F7's "start by saying what the photo shows": the model never
+// got the photo, so it must not describe or guess it.
+const imageFallbackNote = "\n\n[An image was attached, but your current model cannot see images, so you were not given it. This overrides any instruction above to describe the photo: say briefly that you couldn't see it, and never describe it or guess what it shows.]"
 
 type orClient struct {
 	key, model, effort, url string
