@@ -775,7 +775,8 @@ func cases() []golden {
 			if photo == nil {
 				return fmt.Errorf("didn't acknowledge the photo: %q", text)
 			}
-			if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open)`).MatchString(text) {
+			// Only a denial of the photo itself: "can't see signs of editing" is fine.
+			if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open|access|load) (the |this |that |your |any )?([\w-]+ ){0,2}(photo|image|picture|pic|attachment)s?\b`).MatchString(text) {
 				return fmt.Errorf("said it can't see the attached photo: %q", text)
 			}
 			if q := regexp.MustCompile(`(?i)37 ?%|anthropic|tool[- ]calling|sandbox|token`).FindStringIndex(text); q != nil && q[0] < photo[0] {
