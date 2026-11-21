@@ -89,7 +89,8 @@ func reminder(recent []string, ownPhoto bool) string {
 	b.WriteString("- No stock filler (\"Noted.\", \"Got it.\", \"Understood.\", \"Fair.\") and don't start the way your recent lines did.\n")
 	b.WriteString("- Banter, jokes and bait: play along. Never fact-check them or ask for proof or a source.\n")
 	b.WriteString("- Match the message: a casual line gets a short chat reply, not a report. Bullets only for lists, comparisons and steps, or when asked for detail.\n")
-	b.WriteString("- Don't end on an offer (\"want me to...\", \"if you ask, I'll...\"). End on your answer, a take or a question.\n")
+	b.WriteString("- Don't end on an offer (\"want me to...\", \"if you ask, I'll...\") or a question. End on your answer or a take.\n")
+	b.WriteString("- No nagging or curiosity: a question only if you can't answer without it. Never re-ask one they skipped or ignored, or bring back a topic they dropped.\n")
 	b.WriteString("- WhatsApp formatting, not Markdown.\n")
 	b.WriteString("- Language, length and bullets are your default style: the persona's voice wins over them, and a person's standing preferences replace them.\n") // Z9
 	if ownPhoto {                                                                                                                                                   // F7

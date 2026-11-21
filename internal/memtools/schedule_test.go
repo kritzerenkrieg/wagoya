@@ -71,8 +71,10 @@ func TestScheduleRights(t *testing.T) {
 		{other, `{"text":"call mom","in_minutes":30}`, "scheduled: job"},
 		{other, `{"text":"call mom","in_minutes":30,"repeat":"daily"}`, "only owners can schedule repeating"},
 		{other, `{"text":"x","in_minutes":30,"chat":"Futsal"}`, "only owners can schedule into another chat"},
-		{other, `{"text":"go sleep","at":"2026-11-05 23:00","self_initiated":true,"repeat":"daily"}`, "scheduled"},
-		{strangerDM, `{"text":"go sleep","in_minutes":60,"self_initiated":true}`, "only schedule your own messages in chats with one of your owners"},
+		// J9: no jobs of the bot's own; a stray self_initiated is ignored, so
+		// the requester's own rights apply.
+		{other, `{"text":"go sleep","at":"2026-11-05 23:00","self_initiated":true,"repeat":"daily"}`, "only owners can schedule repeating"},
+		{strangerDM, `{"text":"go sleep","in_minutes":60,"self_initiated":true}`, "scheduled"},
 		{strangerDM, `{"text":"call mom","in_minutes":60}`, "scheduled"},
 	} {
 		if got := c.call("schedule_message", c.input); !strings.Contains(got, c.want) {
