@@ -155,3 +155,22 @@ func TestParseUTCOffset(t *testing.T) {
 		}
 	}
 }
+
+// L12: an old "/" command gets a hint to use "!"; anything else doesn't.
+func TestSlashHint(t *testing.T) {
+	for in, want := range map[string]string{
+		"/reset":        "Commands start with ! now: send !reset.",
+		"/Budget":       "Commands start with ! now: send !budget.",
+		"/time +7":      "Commands start with ! now: send !time.",
+		"/resetting":    "",
+		"/etc/hosts":    "",
+		"!reset":        "",
+		"reset":         "",
+		"what's /reset": "",
+		"":              "",
+	} {
+		if got := SlashHint(in); got != want {
+			t.Errorf("SlashHint(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

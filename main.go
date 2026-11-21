@@ -484,6 +484,12 @@ func (b *bot) onMessage(e *events.Message) {
 		b.command(ctx, e, cmd, isGroup, wl)
 		return
 	}
+	// L12: an owner's old "/reset" in a DM gets a hint, not a model reply that
+	// pretends to run it. Groups are left alone: another bot there uses "/".
+	if h := router.SlashHint(cmdText); h != "" && !isGroup && wl && img == nil {
+		b.send(ctx, chat, h, e)
+		return
+	}
 
 	addressed := false
 	if isGroup {

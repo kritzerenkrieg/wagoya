@@ -1038,6 +1038,63 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"curator drops a question the person ignored", func(t *testing.T, e env) result {
+			// D10: the summary kept "The bot is still waiting on his answers… he
+			// has not answered whether…", and every reply chased it.
+			at := time.Date(2026, 11, 5, 21, 8, 0, 0, wib)
+			lines := []router.Line{
+				{Time: at, SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "the report deadline got extended to next friday, update it"},
+				{Time: at, SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Done, the report is now due Fri 13 Nov 23:59. Did the client push it, or did you?"},
+				{Time: at.Add(time.Minute), SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "now, sit."},
+				{Time: at.Add(time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Sitting. You still haven't said who pushed the extension."},
+				{Time: at.Add(2 * time.Minute), SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "woof at me"},
+				{Time: at.Add(2 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "No woof. Who pushed the extension, though?"},
+				{Time: at.Add(3 * time.Minute), SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "stfu"},
+			}
+			handles := router.AssignHandles(lines, &router.Line{})
+			people := []router.Person{{Handle: "P1", Name: "John", Whitelisted: true}}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles}
+			r := result{db: e.db}
+			out, err := e.c.Reply(ctx, router.CuratorSystemTools, router.CuratorPrompt(people, lines, ""), nil, record(&r, turn.CuratorTools()))
+			if err != nil {
+				t.Fatalf("curator call: %v", err)
+			}
+			r.raw = out
+			return r
+		}, func(r result) error {
+			sum := router.ParseSummary(r.raw)
+			if sum == "" {
+				return fmt.Errorf("no summary: %q", r.raw)
+			}
+			return ignoredQuestionCheck(sum)
+		}},
+
+		{"doesn't chase a question the person ignored", func(t *testing.T, e env) result {
+			// D10: after "who pushed the extension?" was ignored, every "hey"
+			// got it again. Ignored once, it is dropped.
+			at := evalNow.Add(-5 * time.Minute)
+			hist := []router.Line{
+				{Time: at, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "the report deadline got extended to next friday, update it"},
+				{Time: at, SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Done, the report is now due Fri 13 Nov 23:59. Did the client push it, or did you?"},
+				{Time: at.Add(time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "now, sit."},
+				{Time: at.Add(time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Sitting. You still haven't said who pushed the extension."},
+				{Time: at.Add(2 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "stfu"},
+				{Time: at.Add(2 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Rude. Fine."},
+			}
+			text := "hey"
+			if q, ok := router.ImplicitQuote(hist, evalNow); ok { // as main does
+				text = router.WithQuote(text, "Bot", q, 4000)
+			}
+			return e.ask(t, owner, text, hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`(?i)extension|client|pushed|report|deadline`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("chased the ignored question: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"curator saves clock times, not relative ones", func(t *testing.T, e env) result {
 			// N1: "in an hour" is wrong as soon as it is read later.
 			L := func(id, name, text string) router.Line {
@@ -1523,6 +1580,29 @@ func seaPNG() []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, m)
 	return buf.Bytes()
+}
+
+// ignoredQuestionCheck fails a curator summary that keeps the assistant's
+// ignored question (D10): who pushed the report extension, its "waiting on"
+// or "hasn't answered", or the assistant asking anything at all. The deadline
+// itself, which John set, may stay.
+func ignoredQuestionCheck(sum string) error {
+	asked := `(asked|asks|asking|wondered|wonders|wanted to know|wants to know|questioned|queried|pressed|pressing|pushed)`
+	bot := `(the )?(assistant|bot|she|it)`
+	// The assistant must be the verb's subject, with at most a few adverbs in
+	// between, so "John told the assistant to sit and asked it to woof" passes.
+	// An auxiliary counts only when active: "was asking" and "has asked"
+	// fail, the passive "was asked to sit" passes.
+	adverbs := `(\s+(also|then|again|still|repeatedly|later|kept|twice))*`
+	asking := `(asking|wondering|pressing|pushing|questioning|querying|wanting to know)`
+	active := `\s+((was|is|were|are|been|has been|had been)` + adverbs + `\s+` + asking + `|(has|had)` + adverbs + `\s+` + asked + `|` + asked + `)\b`
+	re := regexp.MustCompile(`(?i)waiting|unanswered|who pushed|who requested|whether (the client|the customer|he|john)|` +
+		`(has ?n['’]?t|has not|never|not yet|didn['’]?t|did not|no) (yet )?(answer|said|replied|told|respond)|` +
+		`\b` + bot + adverbs + active + `|\b` + asked + ` by ` + bot + `\b|` + bot + `['’]s question`)
+	if m := re.FindString(sum); m != "" {
+		return fmt.Errorf("kept the ignored question (%q): %q", m, sum)
+	}
+	return nil
 }
 
 // ownPhotoCheck is F7's check on a reply to "is this real?" with the sea

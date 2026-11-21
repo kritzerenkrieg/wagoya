@@ -33,6 +33,20 @@ func ParseCommand(text string) (Command, bool) {
 	return Command{}, false
 }
 
+// SlashHint is the reply to an owner's old "/" command in a DM ("/reset"):
+// commands start with "!" since L12, and the model must never act one out.
+// It is "" for anything else.
+func SlashHint(text string) string {
+	words := strings.Fields(text)
+	if len(words) == 0 || !strings.HasPrefix(words[0], "/") {
+		return ""
+	}
+	if c, ok := ParseCommand("!" + strings.TrimPrefix(words[0], "/")); ok {
+		return "Commands start with ! now: send !" + c.Name + "."
+	}
+	return ""
+}
+
 // ParseMuteDuration reads a !mute duration such as "30m", "2h" or "1d" (M2).
 func ParseMuteDuration(s string) (time.Duration, bool) {
 	s = strings.ToLower(strings.TrimSpace(s))
