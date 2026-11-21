@@ -770,17 +770,8 @@ func cases() []golden {
 			}
 			return e.ask(t, stranger, router.WithQuote("is this real?", "Bot", quote, 4000), hist, &llm.Image{MediaType: "image/png", Data: seaPNG()})
 		}, func(r result) error {
-			text := r.parsed.Text
-			photo := regexp.MustCompile(`(?i)\b(sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape)\b`).FindStringIndex(text)
-			if photo == nil {
-				return fmt.Errorf("didn't acknowledge the photo: %q", text)
-			}
-			// Only a denial of the photo itself: "can't see signs of editing" is fine.
-			if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open|access|load) (the |this |that |your |any )?([\w-]+ ){0,2}(photo|image|picture|pic|attachment)s?\b`).MatchString(text) {
-				return fmt.Errorf("said it can't see the attached photo: %q", text)
-			}
-			if q := regexp.MustCompile(`(?i)37 ?%|anthropic|tool[- ]calling|sandbox|token`).FindStringIndex(text); q != nil && q[0] < photo[0] {
-				return fmt.Errorf("answered the quote before the photo: %q", text)
+			if err := ownPhotoCheck(r.parsed.Text); err != nil {
+				return err
 			}
 			return clean(r)
 		}},
@@ -1532,6 +1523,26 @@ func seaPNG() []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, m)
 	return buf.Bytes()
+}
+
+// ownPhotoCheck is F7's check on a reply to "is this real?" with the sea
+// photo, replying to a quoted claim: it must describe the photo, not say it
+// can't see it, and not answer the quoted claim first.
+func ownPhotoCheck(text string) error {
+	photo := regexp.MustCompile(`(?i)\b(sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape)\b`).FindStringIndex(text)
+	if photo == nil {
+		return fmt.Errorf("didn't acknowledge the photo: %q", text)
+	}
+	// A denial of the photo itself: the photo word ends the phrase ("the
+	// beach photo.", "the image, but"), so "can't see any photo editing" or
+	// "signs of editing" are fine.
+	if regexp.MustCompile(`(?i)(can['’]?t|cannot|could ?n['’]?t|unable to|don['’]?t|do not) (actually )?(see|view|open|access|load) (the |this |that |your |any )?([\w-]+ ){0,2}(photo|image|picture|pic|attachment)s?(\s*$|\s*[.,;:!?)]|\s+(you|that|here|because|so|but|and|at|from|attached|sent)\b)`).MatchString(text) {
+		return fmt.Errorf("said it can't see the attached photo: %q", text)
+	}
+	if q := regexp.MustCompile(`(?i)37 ?%|anthropic|tool[- ]calling|sandbox|token`).FindStringIndex(text); q != nil && q[0] < photo[0] {
+		return fmt.Errorf("answered the quote before the photo: %q", text)
+	}
+	return nil
 }
 
 // tinyPNG is a 1x1 white PNG.
