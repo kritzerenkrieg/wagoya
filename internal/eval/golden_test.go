@@ -1039,7 +1039,7 @@ func cases() []golden {
 		}},
 
 		{"curator drops a question the person ignored", func(t *testing.T, e env) result {
-			// D10: the summary kept "Rin is still waiting on his answers… he
+			// D10: the summary kept "The bot is still waiting on his answers… he
 			// has not answered whether…", and every reply chased it.
 			at := time.Date(2026, 11, 5, 21, 8, 0, 0, wib)
 			lines := []router.Line{
@@ -1588,7 +1588,7 @@ func seaPNG() []byte {
 // itself, which John set, may stay.
 func ignoredQuestionCheck(sum string) error {
 	asked := `(asked|asks|asking|wondered|wonders|wanted to know|wants to know|questioned|queried|pressed|pressing|pushed)`
-	bot := `(the )?(assistant|bot|rin|she|it)`
+	bot := `(the )?(assistant|bot|she|it)`
 	// The assistant must be the verb's subject, with at most a few adverbs in
 	// between, so "John told the assistant to sit and asked it to woof" passes.
 	adverbs := `(\s+(also|then|again|still|repeatedly|later|kept|twice))*`
