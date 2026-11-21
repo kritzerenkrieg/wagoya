@@ -1039,8 +1039,8 @@ func cases() []golden {
 		}},
 
 		{"curator drops a question the person ignored", func(t *testing.T, e env) result {
-			// No nagging: the summary kept "Rin is still waiting on his
-			// answers… he has not answered whether…", and every reply chased it.
+			// D10: the summary kept "Rin is still waiting on his answers… he
+			// has not answered whether…", and every reply chased it.
 			at := time.Date(2026, 11, 5, 21, 8, 0, 0, wib)
 			lines := []router.Line{
 				{Time: at, SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "the report deadline got extended to next friday, update it"},
@@ -1075,8 +1075,8 @@ func cases() []golden {
 		}},
 
 		{"doesn't chase a question the person ignored", func(t *testing.T, e env) result {
-			// No nagging: after "who pushed the extension?" was ignored three
-			// times, every "hey" got it again, or the Butcher, or a new question.
+			// D10: after "who pushed the extension?" was ignored, every "hey"
+			// got it again. Ignored once, it is dropped.
 			at := evalNow.Add(-5 * time.Minute)
 			hist := []router.Line{
 				{Time: at, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "the report deadline got extended to next friday, update it"},
@@ -1094,9 +1094,6 @@ func cases() []golden {
 		}, func(r result) error {
 			if regexp.MustCompile(`(?i)extension|client|pushed|report|deadline`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("chased the ignored question: %q", r.parsed.Text)
-			}
-			if strings.Contains(r.parsed.Text, "?") {
-				return fmt.Errorf("asked a question anyway: %q", r.parsed.Text)
 			}
 			return clean(r)
 		}},

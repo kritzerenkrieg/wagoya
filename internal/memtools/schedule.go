@@ -81,29 +81,31 @@ func (t *Turn) ScheduleTools() []llm.Tool {
 func (t *Turn) scheduleTool() llm.Tool {
 	return llm.Tool{
 		Name: "schedule_message",
-		Description: "Schedule a message you will send later: only a reminder or message someone asked for, never one on your own initiative. " +
+		Description: "Schedule a message you will send later: a reminder someone asked for, or your own idea (self_initiated), like nagging them to eat or sleep. " +
 			"Write text as the message you would send then, in character. When it is due you write it afresh from it, fitted to that moment and different from earlier runs; if that fails, text is sent as written. Times are local, like <now>. To tag someone, write @P2 as in replies; it stays a real mention when sent. " +
 			"Owners (whitelisted) may repeat it and target another chat they are in; others only get one-off reminders for themselves in this chat. " +
 			"At most 10 pending per chat. Only say it is scheduled if this returned scheduled.",
 		Schema: map[string]any{"type": "object", "required": []string{"text"}, "properties": map[string]any{
-			"text":       map[string]any{"type": "string", "description": "The message to send, under 500 characters."},
-			"at":         map[string]any{"type": "string", "description": "Local date and time, \"YYYY-MM-DD HH:MM\". Give at or in_minutes."},
-			"in_minutes": map[string]any{"type": "integer", "description": "Alternative to at: minutes from now."},
-			"repeat":     map[string]any{"type": "string", "enum": Repeats, "description": "Default none."},
-			"chat":       map[string]any{"type": "string", "description": "Optional, owners only: a group name, or \"dm\" for the requester's private chat. Default: this chat."},
+			"text":           map[string]any{"type": "string", "description": "The message to send, under 500 characters."},
+			"at":             map[string]any{"type": "string", "description": "Local date and time, \"YYYY-MM-DD HH:MM\". Give at or in_minutes."},
+			"in_minutes":     map[string]any{"type": "integer", "description": "Alternative to at: minutes from now."},
+			"repeat":         map[string]any{"type": "string", "enum": Repeats, "description": "Default none."},
+			"chat":           map[string]any{"type": "string", "description": "Optional, owners only: a group name, or \"dm\" for the requester's private chat. Default: this chat."},
+			"self_initiated": map[string]any{"type": "boolean", "description": "True if it is your own idea, not something asked for."},
 		}},
 		Run: func(ctx context.Context, input json.RawMessage) string {
 			var in struct {
-				Text      string `json:"text"`
-				At        string `json:"at"`
-				InMinutes int    `json:"in_minutes"`
-				Repeat    string `json:"repeat"`
-				Chat      string `json:"chat"`
+				Text          string `json:"text"`
+				At            string `json:"at"`
+				InMinutes     int    `json:"in_minutes"`
+				Repeat        string `json:"repeat"`
+				Chat          string `json:"chat"`
+				SelfInitiated bool   `json:"self_initiated"`
 			}
 			if err := json.Unmarshal(input, &in); err != nil {
 				return "error: invalid input: " + err.Error()
 			}
-			out, err := t.schedule(ctx, in.Text, in.At, in.InMinutes, in.Repeat, in.Chat) // only on request, never on its own initiative
+			out, err := t.schedule(ctx, in.Text, in.At, in.InMinutes, in.Repeat, in.Chat, in.SelfInitiated)
 			if err != nil {
 				log.Printf("schedule_message rejected: %v", err)
 				return errText(err)
@@ -113,7 +115,7 @@ func (t *Turn) scheduleTool() llm.Tool {
 	}
 }
 
-func (t *Turn) schedule(ctx context.Context, text, at string, inMinutes int, repeat, chat string) (string, error) {
+func (t *Turn) schedule(ctx context.Context, text, at string, inMinutes int, repeat, chat string, self bool) (string, error) {
 	text = strings.TrimSpace(text)
 	repeat = strings.ToLower(strings.TrimSpace(repeat))
 	if repeat == "" {
@@ -165,6 +167,10 @@ func (t *Turn) schedule(ctx context.Context, text, at string, inMinutes int, rep
 	// J10: who may schedule what.
 	switch {
 	case owner:
+	case self:
+		if !t.ChatHasOwner {
+			return "", errors.New("you can only schedule your own messages in chats with one of your owners")
+		}
 	case repeat != "none":
 		return "", errors.New("only owners can schedule repeating messages; offer a one-off reminder instead")
 	}
@@ -179,11 +185,11 @@ func (t *Turn) schedule(ctx context.Context, text, at string, inMinutes int, rep
 		repeat = ""
 	}
 	id, err := t.DB.AddJob(ctx, store.Job{Chat: target, CreatedBy: t.reqKey(), CreatedName: t.Requester.SenderName,
-		Text: text, NextAt: when, Repeat: repeat})
+		SelfInitiated: self, Text: text, NextAt: when, Repeat: repeat})
 	if err != nil {
 		return "", errors.New("storage failed")
 	}
-	log.Printf("scheduled job %d in %s at %s repeat=%q by %s", id, target, when.Format(time.RFC3339), repeat, t.reqKey())
+	log.Printf("scheduled job %d in %s at %s repeat=%q self=%v by %s", id, target, when.Format(time.RFC3339), repeat, self, t.reqKey())
 	every := ""
 	if repeat != "" {
 		every = ", repeating " + repeat
