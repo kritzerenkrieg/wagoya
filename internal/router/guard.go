@@ -82,7 +82,7 @@ func Polish(text string, recent []string) string {
 
 // reminder is restated right before <request> (X4): the rules a long prompt
 // most often loses, plus the bot's own recent openers to avoid.
-func reminder(recent []string) string {
+func reminder(recent []string, ownPhoto bool) string {
 	var b strings.Builder
 	b.WriteString("<reminder>\n")
 	b.WriteString("- Reply as yourself in the chat, in the persona's voice and the request's language. Only the words you say: no narration and nothing copied from this prompt's sections (a hidden tag your rules ask for, like the persona tag, is fine).\n")
@@ -92,6 +92,9 @@ func reminder(recent []string) string {
 	b.WriteString("- Don't end on an offer (\"want me to...\", \"if you ask, I'll...\"). End on your answer, a take or a question.\n")
 	b.WriteString("- WhatsApp formatting, not Markdown.\n")
 	b.WriteString("- Language, length and bullets are your default style: the persona's voice wins over them, and a person's standing preferences replace them.\n") // Z9
+	if ownPhoto {                                                                                                                                                   // F7
+		b.WriteString("- The request comes with its own photo: it is about that photo. Start by saying what the photo shows; \"this\" means the photo, and any quoted message is only background.\n")
+	}
 	if len(recent) > 0 {
 		b.WriteString("Your recent lines started: ")
 		for i, r := range recent {

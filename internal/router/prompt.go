@@ -96,7 +96,7 @@ func BuildPrompt(p Prompt) string {
 		}
 		fmt.Fprintf(&b, "<now>%s</now>\n\n", now)
 	}
-	b.WriteString(reminder(Openers(p.History, RecentOpeners))) // X4: next to the request, where a long prompt keeps it
+	b.WriteString(reminder(Openers(p.History, RecentOpeners), p.HasImage && p.ImageNote == OwnImageNote)) // X4: next to the request, where a long prompt keeps it
 	img := ""
 	if p.HasImage {
 		img = ` image="attached"`

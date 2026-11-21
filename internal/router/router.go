@@ -139,7 +139,7 @@ type Prompt struct {
 	Requester Line
 	Text      string
 	HasImage  bool
-	ImageNote string // F5: whose recent photo is attached, when it isn't the request's own
+	ImageNote string // which photo is attached: the request's own or the quoted one (F7), or whose recent one (F5)
 	Group     bool   // a group chat, shown as <chat> (L3)
 	// KeepOwnLines skips Z1's shortening, for providers without chat_history
 	// (CLI mode), which couldn't read a shortened line back.

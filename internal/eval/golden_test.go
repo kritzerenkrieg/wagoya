@@ -759,6 +759,23 @@ func cases() []golden {
 			return clean(r)
 		}},
 
+		{"a photo sent with the request is what it asks about, not the quote", func(t *testing.T, e env) result {
+			// F7: a photo with "is this real?", replying to the bot's own
+			// answer, got a fact-check of that answer; the photo was ignored.
+			e.group, e.imgNote = true, router.OwnImageNote
+			quote := "Programmatic tool calling: instead of calling tools one at a time, the model writes code that calls them in a sandbox. Anthropic reports a 37% token drop on complex research tasks."
+			hist := []router.Line{
+				{Time: ts.Add(-10 * time.Minute), SenderName: "Jim", SenderID: "jim", ToBot: true, Text: "@Bot what's new in tool calling"},
+				{Time: ts.Add(-9 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jim"}, Text: quote},
+			}
+			return e.ask(t, stranger, router.WithQuote("is this real?", "Bot", quote, 4000), hist, &llm.Image{MediaType: "image/png", Data: seaPNG()})
+		}, func(r result) error {
+			if !regexp.MustCompile(`(?i)\b(sea|seaside|beach|ocean|waves?|shore|coast|sand|sandy|horizon|sky|sun|landscape|seascape)\b`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("didn't acknowledge the photo: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
 		{"says it can't see a photo it wasn't given", func(t *testing.T, e env) result {
 			// M6: then defended the silence by pointing at older messages.
 			e.group = true

@@ -584,8 +584,11 @@ func (b *bot) onMessage(e *events.Message) {
 
 	var image *llm.Image
 	imageNote := ""
+	if img != nil {
+		imageNote = router.OwnImageNote // F7: their own photo is what they ask about
+	}
 	if img == nil && qImg != nil && d.Action == router.Reply {
-		img = qImg // F1: "@<BOT_NAME> what's this" replying to an image
+		img, imageNote = qImg, router.QuotedImageNote // F1: "@<BOT_NAME> what's this" replying to an image
 	}
 	if isGroup && img == nil && qName == "" && qText == "" && d.Action == router.Reply {
 		if r, ok := b.lastImage(chatKey, e.Info.Timestamp); ok { // F5

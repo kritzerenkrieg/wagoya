@@ -429,3 +429,27 @@ func TestSystemPromptLevels(t *testing.T) {
 		t.Error("preferences rank not stated")
 	}
 }
+
+// F7: a photo sent with the request gets a reminder line that the request is
+// about it; a quoted or recent photo doesn't.
+func TestOwnPhotoReminder(t *testing.T) {
+	const line = "The request comes with its own photo"
+	for _, tc := range []struct {
+		note string
+		img  bool
+		want bool
+	}{
+		{OwnImageNote, true, true},
+		{QuotedImageNote, true, false},
+		{"the photo Jane posted 1 minute ago", true, false},
+		{"", false, false},
+	} {
+		p := BuildPrompt(Prompt{Text: WithQuote("is this real?", "Bot", "an earlier answer", 300), HasImage: tc.img, ImageNote: tc.note})
+		if got := strings.Contains(p, line); got != tc.want {
+			t.Errorf("note %q: reminder line %v, want %v", tc.note, got, tc.want)
+		}
+		if tc.img && !strings.Contains(p, `image="attached: `+tc.note+`"`) {
+			t.Errorf("note %q not on the request", tc.note)
+		}
+	}
+}
