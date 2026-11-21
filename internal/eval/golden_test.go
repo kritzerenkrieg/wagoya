@@ -1587,11 +1587,14 @@ func seaPNG() []byte {
 // or "hasn't answered", or the assistant asking anything at all. The deadline
 // itself, which John set, may stay.
 func ignoredQuestionCheck(sum string) error {
-	asked := `(asked|asks|wondered|wonders|wanted to know|wants to know|questioned|queried|pressed|pushed)`
+	asked := `(asked|asks|asking|wondered|wonders|wanted to know|wants to know|questioned|queried|pressed|pressing|pushed)`
 	bot := `(the )?(assistant|bot|rin|she|it)`
+	// The assistant must be the verb's subject, with at most a few adverbs in
+	// between, so "John told the assistant to sit and asked it to woof" passes.
+	adverbs := `(\s+(also|then|again|still|repeatedly|later|kept|twice))*`
 	re := regexp.MustCompile(`(?i)waiting|unanswered|who pushed|who requested|whether (the client|the customer|he|john)|` +
 		`(has ?n['’]?t|has not|never|not yet|didn['’]?t|did not|no) (yet )?(answer|said|replied|told|respond)|` +
-		`\b` + bot + `\b[^.]{0,30}\b` + asked + `\b|\b` + asked + ` by ` + bot + `\b|` + bot + `['’]s question`)
+		`\b` + bot + adverbs + `\s+` + asked + `\b|\b` + asked + ` by ` + bot + `\b|` + bot + `['’]s question`)
 	if m := re.FindString(sum); m != "" {
 		return fmt.Errorf("kept the ignored question (%q): %q", m, sum)
 	}
