@@ -91,6 +91,7 @@ func reminder(recent []string, ownPhoto bool) string {
 	b.WriteString("- Match the message: a casual line gets a short chat reply, not a report. Bullets only for lists, comparisons and steps, or when asked for detail.\n")
 	b.WriteString("- Don't end on an offer (\"want me to...\", \"if you ask, I'll...\"). End on your answer, a take or a question.\n")
 	b.WriteString("- A question of yours they skipped or ignored, even once, is dropped: never ask it again or bring back its topic.\n")
+	b.WriteString("- Advice you already gave isn't given again unless they ask or something changed: answer what they say now.\n")
 	b.WriteString("- WhatsApp formatting, not Markdown.\n")
 	b.WriteString("- Language, length and bullets are your default style: the persona's voice wins over them, and a person's standing preferences replace them.\n") // Z9
 	if ownPhoto {                                                                                                                                                   // F7
