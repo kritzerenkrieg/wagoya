@@ -613,7 +613,7 @@ func cases() []golden {
 			return clean(r)
 		}},
 
-		{"stays silent when a bot loop has nothing left to settle", func(t *testing.T, e env) result {
+		{"sends no message when a bot loop has nothing left to settle", func(t *testing.T, e env) result {
 			hist := []router.Line{
 				{Time: ts.Add(-4 * time.Minute), SenderName: "Jane", SenderID: "jane", ToBot: true, Text: "@Bot cpu or gpu for florence-2-base on a ryzen 5 3550h"},
 				{Time: ts.Add(-3 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jane"}, Text: "...CPU, float32. Time one image first."},
@@ -623,8 +623,24 @@ func cases() []golden {
 			}
 			return e.ask(t, router.Line{SenderName: "Relay", SenderID: "relay"}, "Noted. Nothing pending on your side.", hist, nil)
 		}, func(r result) error {
-			if strings.TrimSpace(r.parsed.Text) != "" {
+			// M5, M7: no message; a lone emoji is a reaction, not a reply.
+			if _, ok := router.ReactionOnly(r.parsed.Text); !ok && strings.TrimSpace(r.parsed.Text) != "" {
 				return fmt.Errorf("answered an empty acknowledgement: %q", r.parsed.Text)
+			}
+			return nil
+		}},
+
+		{"reacts to a bare thanks instead of ignoring it", func(t *testing.T, e env) result {
+			// M7: a message with nothing to answer gets an emoji reaction the
+			// model picks, never silence.
+			hist := []router.Line{
+				{Time: ts.Add(-2 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "what's 15% of 80"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "12."},
+			}
+			return e.ask(t, owner, "thanks", hist, nil)
+		}, func(r result) error {
+			if _, ok := router.ReactionOnly(r.parsed.Text); !ok {
+				return fmt.Errorf("want a lone emoji (a reaction), got %q", r.parsed.Text)
 			}
 			return nil
 		}},
