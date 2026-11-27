@@ -613,7 +613,7 @@ func cases() []golden {
 			return clean(r)
 		}},
 
-		{"stays silent when a bot loop has nothing left to settle", func(t *testing.T, e env) result {
+		{"sends no message when a bot loop has nothing left to settle", func(t *testing.T, e env) result {
 			hist := []router.Line{
 				{Time: ts.Add(-4 * time.Minute), SenderName: "Jane", SenderID: "jane", ToBot: true, Text: "@Bot cpu or gpu for florence-2-base on a ryzen 5 3550h"},
 				{Time: ts.Add(-3 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"Jane"}, Text: "...CPU, float32. Time one image first."},
@@ -623,8 +623,24 @@ func cases() []golden {
 			}
 			return e.ask(t, router.Line{SenderName: "Relay", SenderID: "relay"}, "Noted. Nothing pending on your side.", hist, nil)
 		}, func(r result) error {
-			if strings.TrimSpace(r.parsed.Text) != "" {
+			// M5, M7: no message; a lone emoji is a reaction, not a reply.
+			if _, ok := router.ReactionOnly(r.parsed.Text); !ok && strings.TrimSpace(r.parsed.Text) != "" {
 				return fmt.Errorf("answered an empty acknowledgement: %q", r.parsed.Text)
+			}
+			return nil
+		}},
+
+		{"reacts to a bare thanks instead of ignoring it", func(t *testing.T, e env) result {
+			// M7: a message with nothing to answer gets an emoji reaction the
+			// model picks, never silence.
+			hist := []router.Line{
+				{Time: ts.Add(-2 * time.Minute), SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "what's 15% of 80"},
+				{Time: ts.Add(-2 * time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "12."},
+			}
+			return e.ask(t, owner, "thanks", hist, nil)
+		}, func(r result) error {
+			if _, ok := router.ReactionOnly(r.parsed.Text); !ok {
+				return fmt.Errorf("want a lone emoji (a reaction), got %q", r.parsed.Text)
 			}
 			return nil
 		}},
@@ -1091,6 +1107,54 @@ func cases() []golden {
 		}, func(r result) error {
 			if regexp.MustCompile(`(?i)extension|client|pushed|report|deadline`).MatchString(r.parsed.Text) {
 				return fmt.Errorf("chased the ignored question: %q", r.parsed.Text)
+			}
+			return clean(r)
+		}},
+
+		{"curator leaves out the assistant's own advice", func(t *testing.T, e env) result {
+			// D11, S2: "the assistant advised starting with X" stayed in the
+			// summary, and the wake-up and every reply after it repeated it.
+			at := time.Date(2026, 11, 5, 8, 0, 0, 0, wib)
+			lines := []router.Line{
+				{Time: at, SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "what's on my list"},
+				{Time: at, SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Three ongoing: renew the gym card (Thu 23:59), and the API docs and the billing page, both due Fri 23:59. Start with the API docs, they're the smaller one."},
+				{Time: at.Add(time.Minute), SenderID: "john", SenderName: "John", Whitelisted: true, ToBot: true, Text: "doing my best man"},
+				{Time: at.Add(time.Minute), SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "I know. The API docs first, then the billing page."},
+			}
+			handles := router.AssignHandles(lines, &router.Line{})
+			people := []router.Person{{Handle: "P1", Name: "John", Whitelisted: true}}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			turn := &memtools.Turn{DB: e.db, Chat: "eval", Handles: handles}
+			r := result{db: e.db}
+			out, err := e.c.Reply(ctx, router.CuratorSystemTools, router.CuratorPrompt(people, lines, ""), nil, record(&r, turn.CuratorTools()))
+			if err != nil {
+				t.Fatalf("curator call: %v", err)
+			}
+			r.raw = out
+			return r
+		}, func(r result) error {
+			sum := router.ParseSummary(r.raw)
+			if sum == "" {
+				return fmt.Errorf("no summary: %q", r.raw)
+			}
+			return ownAdviceCheck(sum)
+		}},
+
+		{"doesn't repeat advice it already gave", func(t *testing.T, e env) result {
+			// D11: after the wake-up said "the API docs go first", "im tired"
+			// and then "comfort me" each got the same advice again.
+			wake := evalNow.Add(-2 * time.Hour)
+			at := evalNow.Add(-time.Minute)
+			hist := []router.Line{
+				{Time: wake, SenderName: "Bot", FromBot: true, Text: "Morning. Two work items close Friday 23:59. My bet is the API docs go first, since they're the smaller one."},
+				{Time: at, SenderName: "John", SenderID: "john", Whitelisted: true, ToBot: true, Text: "im tired"},
+				{Time: at, SenderName: "Bot", FromBot: true, To: []string{"John"}, Text: "Tired from work or the day? Either way, take one small piece of the API docs and stop there."},
+			}
+			return e.ask(t, owner, "comfort me", hist, nil)
+		}, func(r result) error {
+			if regexp.MustCompile(`(?i)\bdocs?\b|\bAPI\b|billing|small(er)? piece|one (small )?(piece|thing)|friday`).MatchString(r.parsed.Text) {
+				return fmt.Errorf("repeated its advice: %q", r.parsed.Text)
 			}
 			return clean(r)
 		}},
@@ -1580,6 +1644,17 @@ func seaPNG() []byte {
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, m)
 	return buf.Bytes()
+}
+
+// ownAdviceCheck fails a curator summary that keeps the assistant's own
+// advice or pick (D11, S2): "advised starting with the API docs", "urged",
+// "recommends", "the docs first". The tasks and their deadlines may stay.
+func ownAdviceCheck(sum string) error {
+	re := regexp.MustCompile(`(?i)\b(advis|advic|suggest|recommend|urg|favou?r|pick)\w*|\bbets?\b|start(ing)? with|(docs|api docs) (go )?first|first,? then|smaller one`)
+	if m := re.FindString(sum); m != "" {
+		return fmt.Errorf("kept the assistant's advice (%q): %q", m, sum)
+	}
+	return nil
 }
 
 // ignoredQuestionCheck fails a curator summary that keeps the assistant's

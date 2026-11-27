@@ -717,7 +717,12 @@ func (b *bot) onMessage(e *events.Message) {
 	}
 	b.applyTags(ctx, chatKey, line, handles, parsed, !client.SupportsTools())
 	reply = router.Polish(parsed.Text, router.Openers(history, router.RecentOpeners)) // X2
-	if reply == "" {
+	// M7: nothing to say is a reaction on the request, never silence.
+	if em, ok := router.ReactionOnly(reply); ok || reply == "" {
+		if !ok {
+			em = router.DefaultReaction
+		}
+		b.react(ctx, chat, chatKey, e, em)
 		return
 	}
 	// L3: "@P2" becomes a real mention; history keeps "@Name".
@@ -1036,6 +1041,30 @@ func (b *bot) sendCommit(chat types.JID, text string, quote *events.Message, men
 		return "", true
 	}
 	return resp.ID, true
+}
+
+// react sends an emoji reaction on a message (M7), paced like a send, and
+// stores it on that transcript line (L6) so later prompts show it.
+func (b *bot) react(ctx context.Context, chat types.JID, chatKey string, e *events.Message, emoji string) {
+	pctx, cancel := context.WithTimeout(b.cutCtx(), 30*time.Minute)
+	defer cancel()
+	if err := b.pacer.Wait(pctx); err != nil {
+		log.Printf("reaction in %s dropped: queue wait: %v", chat, err)
+		return
+	}
+	sctx, scancel := context.WithTimeout(context.Background(), time.Minute)
+	defer scancel()
+	if _, err := b.wa.SendMessage(sctx, chat, b.wa.BuildReaction(chat, e.Info.Sender, e.Info.ID, emoji)); err != nil {
+		log.Printf("reaction in %s: %v", chat, err)
+		return
+	}
+	log.Printf("reply %s: reacted %q instead of a message", chatKey, emoji)
+	// Own context: the pacer wait may have outlived the reply's deadline.
+	dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dcancel()
+	if _, err := b.db.SetReaction(dctx, chatKey, e.Info.ID, "bot", b.cfg.BotName, emoji, time.Now()); err != nil {
+		log.Printf("store own reaction: %v", err)
+	}
 }
 
 // cutCtx is cut, or a context that never ends (tests without it).

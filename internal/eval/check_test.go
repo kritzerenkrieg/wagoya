@@ -50,3 +50,21 @@ func TestIgnoredQuestionCheck(t *testing.T) {
 		}
 	}
 }
+
+// D11: the curator check keeps John's tasks and deadlines and fails the
+// assistant's own advice about them.
+func TestOwnAdviceCheck(t *testing.T) {
+	for sum, ok := range map[string]bool{
+		"John has three ongoing tasks: renew the gym card (Thu 23:59), the API docs and the billing page (both Fri 23:59). He says he is doing his best.": true,
+		"John is choosing between two hosts; undecided.":               true,
+		"The assistant advised starting with the API docs.":            false,
+		"The assistant suggested the API docs go first, then billing.": false,
+		"It recommends the smaller one first.":                         false,
+		"The assistant urged him to start with the docs.":              false,
+		"The assistant favours the first host.":                        false,
+	} {
+		if err := ownAdviceCheck(sum); (err == nil) != ok {
+			t.Errorf("ownAdviceCheck(%q) = %v, want ok=%v", sum, err, ok)
+		}
+	}
+}

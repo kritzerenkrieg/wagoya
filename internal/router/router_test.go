@@ -405,11 +405,11 @@ func TestAddresseeLabel(t *testing.T) {
 	}
 }
 
-// M5: the prompt tells the model to stay silent (empty reply) when a
-// discussion is over, instead of acknowledging back and forth.
+// M5, M7: when a discussion is over the prompt asks for no message, only a
+// one-emoji reply (sent as a reaction), instead of acknowledging back and forth.
 func TestSystemPromptEndOfDiscussion(t *testing.T) {
 	s := SystemPrompt("Bot", "", false)
-	for _, want := range []string{"Know when a discussion is over", "write nothing at all", "AI agent or bot"} {
+	for _, want := range []string{"Know when a discussion is over", "don't write a message: reply with only one emoji", "sent as a reaction", "AI agent or bot"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("system prompt missing %q", want)
 		}
