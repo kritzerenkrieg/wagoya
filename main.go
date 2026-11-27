@@ -1059,7 +1059,10 @@ func (b *bot) react(ctx context.Context, chat types.JID, chatKey string, e *even
 		return
 	}
 	log.Printf("reply %s: reacted %q instead of a message", chatKey, emoji)
-	if _, err := b.db.SetReaction(ctx, chatKey, e.Info.ID, "bot", b.cfg.BotName, emoji, time.Now()); err != nil {
+	// Own context: the pacer wait may have outlived the reply's deadline.
+	dctx, dcancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dcancel()
+	if _, err := b.db.SetReaction(dctx, chatKey, e.Info.ID, "bot", b.cfg.BotName, emoji, time.Now()); err != nil {
 		log.Printf("store own reaction: %v", err)
 	}
 }
